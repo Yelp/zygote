@@ -7,7 +7,7 @@ import sys
 import tornado.ioloop
 import tornado.httpserver
 
-from .util import is_eintr
+from .util import is_eintr, setproctitle
 from .message import Message
 
 class Zygote(object):
@@ -46,9 +46,11 @@ class Zygote(object):
     signaling to the parent that it is dead.
     """
 
-    log = logging.getLogger('zygote.zygote')
+    log = logging.getLogger('zygote.process')
 
     def __init__(self, sock, basepath, module, read_fd, write_fd):
+        self.version = basepath.split('/')[-1]
+        setproctitle('[zygote version=%s]' % (self.version,))
 
         os.chdir(basepath)
         sys.path.insert(0, basepath)
@@ -140,6 +142,7 @@ class Zygote(object):
             self.children.append(pid)
             self.write(Message.CHILD_CREATED, str(pid))
         else:
+            setproctitle('zygote-worker version=%s' % self.version)
             io_loop = tornado.ioloop.IOLoop()
             app = self.get_application()
             http_server = tornado.httpserver.HTTPServer(app, io_loop=io_loop)

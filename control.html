@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+  <head>
+	<title>{{ title }}</title>
+	<link href="http://yui.yahooapis.com/3.3.0/build/cssreset/reset-min.css" type="text/css" rel="stylesheet"/>
+	<link href="{{static_url('base.css')}}" type="text/css" rel="stylesheet"/>
+	<meta http-equiv="refresh" content="10">
+  </head>
+  <body>
+	<h1>Zygote Monitor</h1>
+	<dl>
+	  <dt>basepath</dt> <dd>{{ escape(basepath) }}</dd> <br>
+	  <dt>RSS</dt> <dd>{{ rss }}</dd> <br>
+	  <dt>VSZ</dt> <dd>{{ vsz }}</dd> <br>
+	</dl>
+
+	{% for pid, statistics in zygotes.iteritems() %}
+	<div>
+	  <h2>Zygote {{ pid }}</h2>
+	  <dl>
+		<dt>basepath</dt> <dd>{{ statistics['basepath'] }}</dd> <br>
+		<dt>created</dt> <dd>{{ statistics['time_created'].strftime('%Y-%m-%d %H:%M:%S') }}</dd> <br>
+		<dt>RSS</dt> <dd> {{statistics['rss']}}</dd> <br>
+		<dt>VSZ</dt> <dd> {{statistics['vsz']}}</dd> <br>
+	  </dl>
+	  <h3>children</h3>
+	  <table>
+		<tr>
+		  <th>PID</th>
+		  <th>Started</th>
+		  <th>VSZ</th>
+		  <th>RSS</th>
+		</tr>
+		{% for c in statistics['children'] %}
+		<tr>
+		  <td>{{c.pid}}</td>
+		  <td>{{c.created.strftime('%Y-%m-%d %H:%M:%S')}}</td>
+		  <td>{{ c.vsz }}</td>
+		  <td>{{ c.rss }}</td>
+		</tr>
+		{% end %}
+	  </table>
+	</div>
+	{% end %}
+
+  </body>
+</html>

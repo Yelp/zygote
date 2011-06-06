@@ -1,0 +1,13 @@
+@import url(http://fonts.googleapis.com/css?family=Droid+Sans+Mono);
+html { font-family: 'Droid Sans Mono', monospace; color: #eeeeec; background-color: #1f1f1f; }
+body { margin: 1em; }
+
+dt { color: #babafa; display: inline; }
+dd { display: inline; }
+
+th { font-weight: bold; padding-right: 1em; color: #70e691}
+td { padding-right: 1em; }
+
+h1 { color: #fc9c54; font-weight: bold; }
+h2 { color: #f9e181; font-weight: bold; }
+h3 { color: #f9e181; font-weight: normal; }

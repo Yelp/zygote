@@ -1,3 +1,4 @@
+import datetime
 import fcntl
 import logging
 import os
@@ -7,24 +8,95 @@ import sys
 
 import tornado.ioloop
 import tornado.httpserver
+import tornado.web
 
 import zygote.util
 from zygote.message import Message
 from zygote.zygote_process import Zygote
 
+def meminfo(pid=None):
+    d = zygote.util.get_meminfo(pid)
+    return {
+        'rss': '%1.2f' % (d['res'] / 1024.0),
+        'vsz': '%1.2f' % (d['virt'] / 1024.0)
+        }
+
+class HTMLHandler(tornado.web.RequestHandler):
+
+    def get(self):
+        env = {'title': 'zygote'}
+        env['basepath'] = self.zygote_master.basepath
+        env['zygotes'] = self.zygote_master.zygote_statistics
+        env.update(meminfo())
+
+        # update the meminfo data
+        for pid, d in env['zygotes'].iteritems():
+            d.update(meminfo(pid))
+            for c in d.get('children', []):
+                m = meminfo(c.pid)
+                c.rss = m['rss']
+                c.vsz = m['vsz']
+
+        self.render('control.html', **env)
+
+class Child(object):
+
+    __slots__ = ['created', 'pid', 'vsz', 'rss']
+
+    def __init__(self, pid):
+        self.pid = pid
+        self.created = datetime.datetime.now()
+        self.vsz = ''
+        self.rss = ''
+
+    def __eq__(self, other_pid):
+        return self.pid == other_pid
+
+class ChildList(object):
+
+    def __init__(self):
+        self.pids = []
+
+    def clear(self):
+        del self.pids[:]
+
+    def add_pid(self, pid):
+        self.pids.append(Child(pid))
+
+    def remove_pid(self, pid):
+        self.pids.remove(pid)
+
+    def __iter__(self):
+        return iter(self.pids)
+
 class ZygoteMaster(object):
 
     log = logging.getLogger('zygote.master')
+    instantiated = False
 
-    def __init__(self, sock, basepath, module, num_workers):
+    def __init__(self, sock, basepath, module, num_workers, control_port):
+        if self.__class__.instantiated:
+            self.log.error('cannot instantiate zygote master more than once')
+            sys.exit(1)
+        self.__class__.instantiated = True
+
         self.io_loop = tornado.ioloop.IOLoop()
         self.sock = sock
         self.basepath = basepath
         self.module = module
         self.num_workers = num_workers
         self.zygotes = []
+        self.zygote_statistics = {} # map of pid to various stats
         self.write_buffers = {}
         self.read_buffers = {}
+
+        HTMLHandler.zygote_master = self
+        app = tornado.web.Application([('/', HTMLHandler)],
+                                      debug=False,
+                                      static_path='static',
+                                      template_path='.')
+        http_server = tornado.httpserver.HTTPServer(app, io_loop=self.io_loop)
+        http_server.listen(control_port)
 
     def create_zygote(self):
         # read the basepath symlink
@@ -45,6 +117,8 @@ class ZygoteMaster(object):
             if pid:
                 self.log.info('started zygote %d pointed at base %r' % (pid, realbase))
                 self.zygotes.append((realbase, pid, read2, write1))
+                self.zygote_statistics[pid] = {'children': ChildList(), 'time_created': datetime.datetime.now(), 'basepath': realbase}
+                self.io_loop.add_handler(read2, self.handle_read, self.io_loop.READ)
                 return write1
             else:
                 # Try to clean up some of the file descriptors and whatnot that
@@ -74,11 +148,9 @@ class ZygoteMaster(object):
 
         self.zygotes.remove(z)
 
-    def read_fds(self):
-        return [r for _, _, r, _ in self.zygotes]
-
     def write(self, fd, msg):
         self.write_buffers[fd] = self.write_buffers.get(fd, '') + msg
+        self.io_loop.add_handler(fd, self.handle_write, self.io_loop.WRITE)
 
     def read_fd_to_zygote(self, r):
         for base, pid, read, write in self.zygotes:
@@ -114,43 +186,37 @@ class ZygoteMaster(object):
     def start(self):
         w = self.create_zygote()
         self.write(w, Message.SPAWN_CHILD * self.num_workers)
-        self.loop()
+        self.io_loop.start()
 
-    def loop(self):
-        while True:
-            try:
-                reads, writes, _ = select.select(self.read_fds(), self.write_buffers.keys(), [])
-            except select.error, e:
-                if zygote.util.is_eintr(e):
-                    self.log.debug('ignoring EINTR')
-                    continue
-                else:
-                    raise
-            except KeyboardInterrupt:
-                self.log.info('caught KeyboardInterrupt, exiting')
-                break
+    def handle_read(self, fd, events):
+        msg = os.read(fd, 512)
+        base, pid, write = self.read_fd_to_zygote(fd)
+        if len(msg) == 0:
+            self.remove_zygote(fd, write)
+            os.close(fd)
+            self.io_loop.remove_handler(fd)
+            return
 
-            for read_fd in reads:
-                msg = os.read(read_fd, 512)
-                base, pid, write = self.read_fd_to_zygote(read_fd)
-                if len(msg) == 0:
-                    self.remove_zygote(read_fd, write)
-                    continue
+        for msg_control, msg_body in self.get_read_messages(pid, msg):
+            if msg_control == Message.CHILD_CREATED:
+                child_pid = int(msg_body)
+                self.zygote_statistics[pid]['children'].add_pid(child_pid)
+            elif msg_control == Message.CHILD_DIED:
+                child_pid = int(msg_body)
+                self.zygote_statistics[pid]['children'].remove_pid(child_pid)
+            self.log.debug('got message %r from pid %d' % (msg_control + msg_body, pid))
 
-                for msg_control, msg_body in self.get_read_messages(pid, msg):
-                    self.log.debug('got message %r from pid %d' % (msg_control + msg_body, pid))
-
-            for write_fd in writes:
-                if write_fd not in self.write_buffers:
-                    # maybe the write_buffer was removed by remove_zygote in the
-                    # read loop above
-                    continue
-                bytes = os.write(write_fd, self.write_buffers[write_fd])
-                if bytes == len(self.write_buffers[write_fd]):
-                    del self.write_buffers[write_fd]
-                else:
-                    self.write_buffs[write_fd] = self.write_buffers[write_fd][bytes:]
-
+    def handle_write(self, fd, events):
+        if fd not in self.write_buffers:
+            # maybe the write_buffer was removed by remove_zygote in the
+            # read loop above
+            return
+        bytes = os.write(fd, self.write_buffers[fd])
+        if bytes == len(self.write_buffers[fd]):
+            del self.write_buffers[fd]
+            self.io_loop.remove_handler(fd)
+        else:
+            self.write_buffers[fd] = self.write_buffers[fd][bytes:]
 
 def main(opts, module):
     zygote.util.setproctitle('[zygote master %s]' % (module,))
@@ -181,5 +247,5 @@ def main(opts, module):
     sock.bind((opts.interface, opts.port))
     sock.listen(128)
 
-    master = ZygoteMaster(sock, opts.basepath, module, opts.num_workers)
+    master = ZygoteMaster(sock, opts.basepath, module, opts.num_workers, opts.control_port)
     master.start()
