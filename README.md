@@ -84,6 +84,32 @@ tree looks as expected. Additionally, if you have the `setproctitle` Python
 module available, the processes will set their titles such that it's easy to see
 what version of the code everything is running.
 
+How to Use It
+-------------
+
+To use Zygote, you need to write a module that implements a `get_application`
+method. That method takes no arguments, and returns an object that can be used
+by a [Tornado](http://www.tornadoweb.org/) HTTPServer object (typically this
+would be an instance of `tornado.web.Application`).
+
+After that, an invocation of Zygote would be done like this:
+
+    python -m zygote.main -p 8000 -b ./example example
+
+Let's break that down. The `python -m zygote.main` part instructs Python to run
+Zygote's `main` module. The parts after that are options and arguments. The `-p
+8000` option instructs Zygote that your application will be served from port
+8000. The `-b ./example` option states that the symlink for your application
+exists at `./example`. This does not strictly need to be a symlink, but the code
+versioning will only work if it is a symlink. The final argument is just
+`example` and that states that the module name for the application is `example`.
+
+The example invocation given above will work if you run it from a clone of the
+Zygote source code. The `-b` option tells Zygote what to insert into `sys.path`
+to make your code runnable, and in the Zygote source tree there's a file named
+`example/example.py`. In other words, `example` gets added to `sys.path` and
+that makes `example.py` importable by doing `import example`.
+
 Caveats
 -------
 
