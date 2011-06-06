@@ -18,7 +18,8 @@ def meminfo(pid=None):
     d = zygote.util.get_meminfo(pid)
     return {
         'rss': '%1.2f' % (d['res'] / 1024.0),
-        'vsz': '%1.2f' % (d['virt'] / 1024.0)
+        'vsz': '%1.2f' % (d['virt'] / 1024.0),
+        'shr': '%1.2f' % (d['shr'] / 1024.0)
         }
 
 class HTMLHandler(tornado.web.RequestHandler):
@@ -27,6 +28,8 @@ class HTMLHandler(tornado.web.RequestHandler):
         env = {'title': 'zygote'}
         env['basepath'] = self.zygote_master.basepath
         env['zygotes'] = self.zygote_master.zygote_statistics
+        env['start_time'] = self.zygote_master.time_created.strftime('%Y-%m-%d %H:%M:%S')
+        env['time_now'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         env.update(meminfo())
 
         # update the meminfo data
@@ -34,20 +37,21 @@ class HTMLHandler(tornado.web.RequestHandler):
             d.update(meminfo(pid))
             for c in d.get('children', []):
                 m = meminfo(c.pid)
-                c.rss = m['rss']
-                c.vsz = m['vsz']
+                for k, v in m.items():
+                    setattr(c, k, v)
 
         self.render('control.html', **env)
 
 class Child(object):
 
-    __slots__ = ['created', 'pid', 'vsz', 'rss']
+    __slots__ = ['created', 'pid', 'vsz', 'rss', 'shr']
 
     def __init__(self, pid):
         self.pid = pid
         self.created = datetime.datetime.now()
         self.vsz = ''
         self.rss = ''
+        self.shr = ''
 
     def __eq__(self, other_pid):
         return self.pid == other_pid
@@ -89,12 +93,14 @@ class ZygoteMaster(object):
         self.zygote_statistics = {} # map of pid to various stats
         self.write_buffers = {}
         self.read_buffers = {}
+        self.time_created = datetime.datetime.now()
 
         HTMLHandler.zygote_master = self
+        print os.path.realpath('static')
         app = tornado.web.Application([('/', HTMLHandler)],
                                       debug=False,
-                                      static_path='static',
-                                      template_path='.')
+                                      static_path=os.path.realpath('static'),
+                                      template_path=os.path.realpath('templates'))
         http_server = tornado.httpserver.HTTPServer(app, io_loop=self.io_loop)
         http_server.listen(control_port)
 

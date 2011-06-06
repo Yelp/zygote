@@ -124,3 +124,6 @@ side-effect of importing your code, and only done upon initialization of the
 code. If you *do* have non-forksafe resources in your code, you need to write
 code that reinitializes those resources when the application is instantiated (or
 by detecting when the current PID changes).
+
+Zygote supports IPv4 only. Support for IPv6 should be easy to add, if there's a
+need.

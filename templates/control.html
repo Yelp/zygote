@@ -9,27 +9,32 @@
   <body>
 	<h1>Zygote Monitor</h1>
 	<dl>
+	  <dt>created</td> <dd>{{ start_time }}</dd> <br>
 	  <dt>basepath</dt> <dd>{{ escape(basepath) }}</dd> <br>
-	  <dt>RSS</dt> <dd>{{ rss }}</dd> <br>
+	  <br>
 	  <dt>VSZ</dt> <dd>{{ vsz }}</dd> <br>
+	  <dt>RSS</dt> <dd>{{ rss }}</dd> <br>
+	  <dt>SHR</dt> <dd>{{ shr }}</dd> <br>
 	</dl>
 
 	{% for pid, statistics in zygotes.iteritems() %}
-	<div>
+	<div class="vgap">
 	  <h2>Zygote {{ pid }}</h2>
 	  <dl>
-		<dt>basepath</dt> <dd>{{ statistics['basepath'] }}</dd> <br>
 		<dt>created</dt> <dd>{{ statistics['time_created'].strftime('%Y-%m-%d %H:%M:%S') }}</dd> <br>
-		<dt>RSS</dt> <dd> {{statistics['rss']}}</dd> <br>
+		<dt>basepath</dt> <dd>{{ statistics['basepath'] }}</dd> <br>
+		<br>
 		<dt>VSZ</dt> <dd> {{statistics['vsz']}}</dd> <br>
+		<dt>RSS</dt> <dd> {{statistics['rss']}}</dd> <br>
+		<dt>SHR</dt> <dd> {{statistics['shr']}}</dd> <br>
 	  </dl>
-	  <h3>children</h3>
-	  <table>
+	  <table class="vgap">
 		<tr>
 		  <th>PID</th>
 		  <th>Started</th>
 		  <th>VSZ</th>
 		  <th>RSS</th>
+		  <th>SHR</th>
 		</tr>
 		{% for c in statistics['children'] %}
 		<tr>
@@ -37,11 +42,16 @@
 		  <td>{{c.created.strftime('%Y-%m-%d %H:%M:%S')}}</td>
 		  <td>{{ c.vsz }}</td>
 		  <td>{{ c.rss }}</td>
+		  <td>{{ c.shr }}</td>
 		</tr>
 		{% end %}
 	  </table>
 	</div>
 	{% end %}
+
+	<div class="ft">
+	  This page was last refreshed at {{ time_now }}
+	</div>
 
   </body>
 </html>
