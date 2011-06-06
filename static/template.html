@@ -1,0 +1,35 @@
+<dl>
+  <dt>created:</dt> <dd>{{start_time}}</dd> <br>
+  <dt>basepath:</dt> <dd>{{basepath}}</dd> <br>
+  <br>
+  <dt>RSS:</dt> <dd>{{rss}}</dd> <br>
+  <dt>VSZ:</dt> <dd>{{vsz}}</dd> <br>
+</dl>
+
+{{#zygotes}}
+<div class="vgap">
+  <h2>Zygote {{pid}}</h2>
+  <dl>
+	<dt>created:</dt> <dd>{{time_created}}</dd> <br>
+	<dt>basepath:</dt> <dd>{{basepath}}</dd> <br>
+	<br>
+	<dt>RSS:</dt> <dd>{{rss}}</dd> <br>
+	<dt>VSZ:</dt> <dd>{{vsz}}</dd> <br>
+  </dl>
+  <table class="vgap">
+	<tr>
+	  <th>PID</th>
+	  <th>Created</th>
+	  <th>VSZ</th>
+	  <th>RSS</th>
+	</tr>
+	{{#children}}
+	<tr>
+	  <td>{{pid}}</td>
+	  <td>{{created}}</td>
+	  <td>{{vsz}}</td>
+	  <td>{{rss}}</td>
+	</tr>
+	{{/children}}
+</div>
+{{/zygotes}}

@@ -12,5 +12,8 @@ h1 { color: #fc9c54; font-weight: bold; }
 h2 { color: #f9e181; font-weight: bold; }
 h3 { color: #f9e181; font-weight: normal; }
 
+a { color: #babafa; }
+a:visited { color: #babafa; }
+
 .ft { margin-top: 1em; }
 .vgap { margin-top: 1em; }

@@ -14,6 +14,11 @@ import zygote.util
 from zygote.message import Message
 from zygote.zygote_process import Zygote
 
+try:
+    import simplejson as json
+except ImportError:
+    import json
+
 def meminfo(pid=None):
     d = zygote.util.get_meminfo(pid)
     return {
@@ -22,25 +27,36 @@ def meminfo(pid=None):
         'shr': '%1.2f' % (d['shr'] / 1024.0)
         }
 
+class JSONEncoder(json.JSONEncoder):
+
+    def default(self, obj):
+        if hasattr(obj, 'to_dict'):
+            return obj.to_dict()
+        elif type(obj) is datetime.datetime:
+            return obj.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            return super(JSONEncoder, self).default(obj)
+
 class HTMLHandler(tornado.web.RequestHandler):
 
     def get(self):
-        env = {'title': 'zygote'}
+        self.render('home.html')
+
+class JSONHandler(tornado.web.RequestHandler):
+
+    def get(self):
+
+        self.zygote_master.zygote_statistics.update_meminfo()
+
+        env = {}
         env['basepath'] = self.zygote_master.basepath
         env['zygotes'] = self.zygote_master.zygote_statistics
-        env['start_time'] = self.zygote_master.time_created.strftime('%Y-%m-%d %H:%M:%S')
-        env['time_now'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        env['start_time'] = self.zygote_master.time_created
+        env['time_now'] = datetime.datetime.now()
         env.update(meminfo())
 
-        # update the meminfo data
-        for pid, d in env['zygotes'].iteritems():
-            d.update(meminfo(pid))
-            for c in d.get('children', []):
-                m = meminfo(c.pid)
-                for k, v in m.items():
-                    setattr(c, k, v)
-
-        self.render('control.html', **env)
+        self.set_header('Content-Type', 'application/json')
+        self.write(json.dumps(env, cls=JSONEncoder))
 
 class Child(object):
 
@@ -53,8 +69,16 @@ class Child(object):
         self.rss = ''
         self.shr = ''
 
+    def update_meminfo(self):
+        m = meminfo(self.pid)
+        for k, v in meminfo(self.pid).iteritems():
+            setattr(self, k, v)
+
     def __eq__(self, other_pid):
         return self.pid == other_pid
+
+    def to_dict(self):
+        return {'pid': self.pid, 'created': self.created, 'vsz': self.vsz, 'rss': self.rss, 'shr': self.shr}
 
 class ChildList(object):
 
@@ -73,6 +97,43 @@ class ChildList(object):
     def __iter__(self):
         return iter(self.pids)
 
+    def to_dict(self):
+        return self.pids
+
+class ZygoteStatistics(object):
+
+    def __init__(self):
+        self.statistics_map = {}
+
+    def add_pid(self, pid, basepath):
+        self.statistics_map[pid] = {'children': ChildList(),
+                                    'time_created': datetime.datetime.now(),
+                                    'basepath': basepath}
+
+    def remove_pid(self, pid):
+        del self.statistics_map[pid]
+
+    def add_child(self, pid, child):
+        self.statistics_map[pid]['children'].add_pid(child)
+
+    def remove_child(self, pid, child):
+        self.statistics_map[pid]['children'].remove_pid(child)
+
+    def update_meminfo(self):
+        for pid, vals in self.statistics_map.iteritems():
+            vals.update(meminfo(pid))
+            for c in vals['children']:
+                c.update_meminfo()
+
+    def to_dict(self):
+        xs = []
+        for pid, v in self.statistics_map.iteritems():
+            d = v.copy()
+            d['pid'] = pid
+            xs.append(d)
+        xs.sort(key=lambda x: x['time_created'])
+        return xs
+
 class ZygoteMaster(object):
 
     log = logging.getLogger('zygote.master')
@@ -90,18 +151,17 @@ class ZygoteMaster(object):
         self.module = module
         self.num_workers = num_workers
         self.zygotes = []
-        self.zygote_statistics = {} # map of pid to various stats
+        self.zygote_statistics = ZygoteStatistics() # map of pid to various stats
         self.write_buffers = {}
         self.read_buffers = {}
         self.time_created = datetime.datetime.now()
 
-        HTMLHandler.zygote_master = self
-        print os.path.realpath('static')
-        app = tornado.web.Application([('/', HTMLHandler)],
+        JSONHandler.zygote_master = self
+        app = tornado.web.Application([('/', HTMLHandler), ('/json', JSONHandler)],
                                       debug=False,
                                       static_path=os.path.realpath('static'),
                                       template_path=os.path.realpath('templates'))
-        http_server = tornado.httpserver.HTTPServer(app, io_loop=self.io_loop)
+        http_server = tornado.httpserver.HTTPServer(app, io_loop=self.io_loop, no_keep_alive=True)
         http_server.listen(control_port)
 
     def create_zygote(self):
@@ -114,7 +174,7 @@ class ZygoteMaster(object):
             return write_fd
         else:
             # the basepath has changed, create a new zygote
-            # TODO: it would actually be better to fork here (in the ZygoteMaster) so we could 
+            # TODO: it would actually be better to fork here (in the ZygoteMaster) so we could
 
             read1, write1 = os.pipe()
             read2, write2 = os.pipe()
@@ -123,7 +183,7 @@ class ZygoteMaster(object):
             if pid:
                 self.log.info('started zygote %d pointed at base %r' % (pid, realbase))
                 self.zygotes.append((realbase, pid, read2, write1))
-                self.zygote_statistics[pid] = {'children': ChildList(), 'time_created': datetime.datetime.now(), 'basepath': realbase}
+                self.zygote_statistics.add_pid(pid, realbase)
                 self.io_loop.add_handler(read2, self.handle_read, self.io_loop.READ)
                 return write1
             else:
@@ -139,7 +199,7 @@ class ZygoteMaster(object):
                 # create the zygote
                 z = Zygote(self.sock, realbase, self.module, read1, write2)
                 z.loop()
-    
+
     def remove_zygote(self, read_fd, write_fd):
         for z in self.zygotes:
             _, pid, r, w = z
@@ -179,11 +239,11 @@ class ZygoteMaster(object):
             pos = current_msg.find('!')
             if pos < 0:
                 break
-                
+
             msg = current_msg[:pos]
             yield msg[0], msg[1:]
             current_msg = current_msg[pos + 1:]
-            
+
         if current_msg:
             self.read_buffers[pid] = current_msg
         elif pid in self.read_buffers:
@@ -206,10 +266,10 @@ class ZygoteMaster(object):
         for msg_control, msg_body in self.get_read_messages(pid, msg):
             if msg_control == Message.CHILD_CREATED:
                 child_pid = int(msg_body)
-                self.zygote_statistics[pid]['children'].add_pid(child_pid)
+                self.zygote_statistics.add_child(pid, child_pid)
             elif msg_control == Message.CHILD_DIED:
                 child_pid = int(msg_body)
-                self.zygote_statistics[pid]['children'].remove_pid(child_pid)
+                self.zygote_statistics.remove_child(pid, child_pid)
             self.log.debug('got message %r from pid %d' % (msg_control + msg_body, pid))
 
     def handle_write(self, fd, events):
@@ -236,6 +296,7 @@ def main(opts, module):
         console_handler.setLevel(logging.DEBUG if opts.debug else logging.INFO)
         console_handler.setFormatter(formatter)
         logging.root.addHandler(console_handler)
+        #log.addHandler(console_handler)
 
     if opts.debug:
         logging.root.setLevel(logging.DEBUG)
