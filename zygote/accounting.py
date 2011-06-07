@@ -7,7 +7,6 @@ import socket
 from zygote import message
 from zygote.util import meminfo_fmt
 
-
 class Worker(object):
 
     def __init__(self, pid):
@@ -20,7 +19,6 @@ class Worker(object):
         self.http = None
 
     def update_meminfo(self):
-        f = meminfo_fmt(self.pid)
         for k, v in meminfo_fmt(self.pid).iteritems():
             setattr(self, k, v)
 
@@ -28,7 +26,7 @@ class Worker(object):
         return self.pid == other_pid
 
     def to_dict(self):
-        return {'pid': self.pid, 'vsz': self.vsz, 'rss': self.rss, 'shr': self.shr, 'time_created': self.time_created}
+        return {'pid': self.pid, 'vsz': self.vsz, 'rss': self.rss, 'shr': self.shr, 'time_created': self.time_created, 'request_count': self.request_count, 'http': self.http}
 
     def request_exit(self):
         """Instruct this worker to exit"""
@@ -83,7 +81,10 @@ class Zygote(object):
         self.worker_map[pid].http = None
 
     def idle_workers(self):
-        return [w for w in self.worker_map.itervalues() if v.http is None]
+        return [w for w in self.worker_map.itervalues() if w.http is None]
+
+    def get_worker(self, pid):
+        return self.worker_map.get(pid)
 
     def request_spawn(self):
         """Instruct this zygote to spawn a new worker"""
@@ -116,6 +117,13 @@ class ZygoteCollection(object):
 
     def remove_zygote(self, pid):
         del self.zygote_map[pid]
+
+    def get_worker(self, pid):
+        for zygote in self.zygote_map.itervalues():
+            w = zygote.get_worker(pid)
+            if w:
+                return w
+        return None
 
     def basepath_to_zygote(self, basepath):
         for zygote in self.zygote_map.itervalues():

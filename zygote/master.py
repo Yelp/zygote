@@ -47,10 +47,13 @@ class ZygoteMaster(object):
         zygote.handlers.get_httpserver(self.io_loop, control_port, self)
 
     def recv_protol_msg(self, fd, events):
+        """Callback for messages received on the domain_socket"""
+
         assert fd == self.domain_socket.fileno()
         data = self.domain_socket.recv(self.RECV_SIZE)
         msg = message.Message.parse(data)
         msg_type = type(msg)
+        self.log.debug('received message of type %s' % (msg_type.__name__,))
         if msg_type is message.MessageWorkerStart:
             self.zygote_collection[msg.worker_ppid].add_worker(msg.pid)
         elif msg_type is message.MessageWorkerExit:
@@ -58,7 +61,12 @@ class ZygoteMaster(object):
             zygote.remove_worker(msg.child_pid)
             zygote.request_spawn() # XXX: unconditionally request a respawn
         elif msg_type is message.MessageHTTPBegin:
-            self.register
+            worker = self.zygote_collection.get_worker(msg.pid)
+            worker.request_count += 1
+            worker.http = msg.payload
+        elif msg_type is message.MessageHTTPEnd:
+            worker = self.zygote_collection.get_worker(msg.pid)
+            worker.http = None
 
     def create_zygote(self):
         """"Create a new zygote"""
@@ -87,90 +95,11 @@ class ZygoteMaster(object):
                 z = Zygote(self.sock, realbase, self.module)
                 z.loop()
 
-    def remove_zygote(self, read_fd, write_fd):
-        for z in self.zygotes:
-            _, pid, r, w = z
-            if read_fd == r or write_fd == w:
-                os.close(r)
-                os.close(w)
-                del self.write_buffers[w]
-                del self.write_buffers[pid]
-                break
-        else:
-            assert False, 'could not find that zygote'
-
-        self.zygotes.remove(z)
-
-    def write(self, fd, msg):
-        self.write_buffers[fd] = self.write_buffers.get(fd, '') + msg
-        self.io_loop.add_handler(fd, self.handle_write, self.io_loop.WRITE)
-
-    def read_fd_to_zygote(self, r):
-        for base, pid, read, write in self.zygotes:
-            if read == r:
-                return base, pid, write
-        assert False
-
-    def base_to_write_fd(self, base):
-        for b, pid, _, write_fd in self.zygotes:
-            if b == base:
-                return pid, write_fd
-        return None, None
-
-    def get_read_messages(self, pid, msg):
-        """Add in the currently read buffer from a pid, and yield out complete
-        messages like ('c', '1984'). This takes care of all read buffering.
-        """
-        current_msg = self.read_buffers.get(pid, '') + msg
-        while current_msg:
-            pos = current_msg.find('!')
-            if pos < 0:
-                break
-
-            msg = current_msg[:pos]
-            yield msg[0], msg[1:]
-            current_msg = current_msg[pos + 1:]
-
-        if current_msg:
-            self.read_buffers[pid] = current_msg
-        elif pid in self.read_buffers:
-            del self.read_buffers[pid]
-
     def start(self):
         z = self.create_zygote()
         for x in xrange(self.num_workers):
             z.request_spawn()
         self.io_loop.start()
-
-    def handle_read(self, fd, events):
-        msg = os.read(fd, 512)
-        base, pid, write = self.read_fd_to_zygote(fd)
-        if len(msg) == 0:
-            self.remove_zygote(fd, write)
-            os.close(fd)
-            self.io_loop.remove_handler(fd)
-            return
-
-        for msg_control, msg_body in self.get_read_messages(pid, msg):
-            if msg_control == Message.CHILD_CREATED:
-                child_pid = int(msg_body)
-                self.zygote_statistics.add_child(pid, child_pid)
-            elif msg_control == Message.CHILD_DIED:
-                child_pid = int(msg_body)
-                self.zygote_statistics.remove_child(pid, child_pid)
-            self.log.debug('got message %r from pid %d' % (msg_control + msg_body, pid))
-
-    def handle_write(self, fd, events):
-        if fd not in self.write_buffers:
-            # maybe the write_buffer was removed by remove_zygote in the
-            # read loop above
-            return
-        bytes = os.write(fd, self.write_buffers[fd])
-        if bytes == len(self.write_buffers[fd]):
-            del self.write_buffers[fd]
-            self.io_loop.remove_handler(fd)
-        else:
-            self.write_buffers[fd] = self.write_buffers[fd][bytes:]
 
 def main(opts, module):
     zygote.util.setproctitle('[zygote master %s]' % (module,))

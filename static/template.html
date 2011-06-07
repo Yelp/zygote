@@ -22,6 +22,8 @@
 	  <th>Created</th>
 	  <th>VSZ</th>
 	  <th>RSS</th>
+	  <th>#</th>
+	  <th>HTTP Line</th>
 	</tr>
 	{{#workers}}
 	<tr>
@@ -29,6 +31,8 @@
 	  <td>{{time_created}}</td>
 	  <td>{{vsz}}</td>
 	  <td>{{rss}}</td>
+	  <td>{{request_count}}</td>
+	  <td>{{http}}</td>
 	</tr>
 	{{/workers}}
 </div>

@@ -8,7 +8,7 @@ class Message(object):
     WORKER_EXIT    = 'X'
 
     HTTP_BEGIN     = 'B'
-    HTTP_EXIT      = 'E'
+    HTTP_END       = 'E'
 
     @classmethod
     def emit(cls, body):
@@ -26,7 +26,7 @@ class Message(object):
             return MessageWorkerExit(pid, body)
         elif type == cls.HTTP_BEGIN:
             return MessageHTTPBegin(pid, body)
-        elif type == cls.HTTP_EXIT:
+        elif type == cls.HTTP_END:
             return MessageHTTPEnd(pid, body)
         else:
             assert False
@@ -69,9 +69,9 @@ class MessageHTTPBegin(Message):
         super(MessageHTTPBegin, self).__init__(pid)
         self.payload = body
 
-class MessageHTTPExit(Message):
+class MessageHTTPEnd(Message):
 
-    msg_type = Message.HTTP_EXIT
+    msg_type = Message.HTTP_END
 
     def __init__(self, pid, body):
         super(MessageHTTPEnd, self).__init__(pid)

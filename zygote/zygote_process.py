@@ -1,15 +1,15 @@
 import logging
 import os
-import select
 import signal
 import socket
 import sys
 
 import tornado.ioloop
 import tornado.httpserver
+from ._httpserver import HTTPServer
 
-from .util import is_eintr, setproctitle
-from .message import Message, MessageCreateWorker, MessageWorkerStart, MessageWorkerExit
+from .util import setproctitle
+from .message import Message, MessageCreateWorker, MessageWorkerStart, MessageWorkerExit, MessageHTTPEnd, MessageHTTPBegin
 
 log = logging.getLogger(__name__)
 
@@ -85,10 +85,18 @@ class Zygote(object):
     def spawn_worker(self):
         pid = os.fork()
         if not pid:
+            def on_line(line):
+                self.notify_socket.send(MessageHTTPBegin.emit(line))
+            def on_close():
+                print 'in onclose'
+                self.notify_socket.send(MessageHTTPEnd.emit(''))
+                print 'done with onclose'
             self.notify(MessageWorkerStart.emit(str(os.getppid())))
             setproctitle('zygote-worker version=%s' % self.version)
             io_loop = tornado.ioloop.IOLoop()
             app = self.get_application()
-            http_server = tornado.httpserver.HTTPServer(app, io_loop=io_loop)
-            io_loop.add_handler(self.sock, http_server._handle_events, io_loop.READ)
+            #http_server = tornado.httpserver.HTTPServer(app, io_loop=io_loop, no_keep_alive=True)
+            http_server = HTTPServer(app, io_loop=io_loop, no_keep_alive=True, close_callback=on_close, headers_callback=on_line)
+            http_server._socket = self.sock
+            io_loop.add_handler(self.sock.fileno(), http_server._handle_events, io_loop.READ)
             io_loop.start()
