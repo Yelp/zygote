@@ -7,8 +7,11 @@ $(document).ready(function () {
 		$('#content').html(Mustache.to_html(template, vars));
 	};
 
+	var refreshWidget = $('#refresh_widget');
+
 	var updateVars = function () {
 		$.get('/json', function (data) {
+			lastRefreshed = new Date();
 			if (!logged) {
 				console.info(data);
 				logged = true;
@@ -17,6 +20,7 @@ $(document).ready(function () {
 			if (template) {
 				render();
 			}
+			refreshWidget.text((new Date()).toLocaleString());
 		});
 	};
 
@@ -30,4 +34,10 @@ $(document).ready(function () {
 
 	updateVars();
 	setInterval(updateVars, 10000);
+
+	$('#refresh_page').click(function (e) {
+		e.preventDefault();
+		updateVars();
+	});
+
 });

@@ -2,7 +2,6 @@ import datetime
 import fcntl
 import logging
 import os
-import select
 import socket
 import sys
 
@@ -11,133 +10,18 @@ import tornado.httpserver
 import tornado.web
 
 import zygote.util
-from zygote.message import Message
+import zygote.handlers
+from zygote import message
+from zygote import accounting
 from zygote.zygote_process import Zygote
 
-try:
-    import simplejson as json
-except ImportError:
-    import json
-
-def meminfo(pid=None):
-    d = zygote.util.get_meminfo(pid)
-    return {
-        'rss': '%1.2f' % (d['res'] / 1024.0),
-        'vsz': '%1.2f' % (d['virt'] / 1024.0),
-        'shr': '%1.2f' % (d['shr'] / 1024.0)
-        }
-
-class JSONEncoder(json.JSONEncoder):
-
-    def default(self, obj):
-        if hasattr(obj, 'to_dict'):
-            return obj.to_dict()
-        elif type(obj) is datetime.datetime:
-            return obj.strftime('%Y-%m-%d %H:%M:%S')
-        else:
-            return super(JSONEncoder, self).default(obj)
-
-class HTMLHandler(tornado.web.RequestHandler):
-
-    def get(self):
-        self.render('home.html')
-
-class JSONHandler(tornado.web.RequestHandler):
-
-    def get(self):
-
-        self.zygote_master.zygote_statistics.update_meminfo()
-
-        env = {}
-        env['basepath'] = self.zygote_master.basepath
-        env['zygotes'] = self.zygote_master.zygote_statistics
-        env['start_time'] = self.zygote_master.time_created
-        env['time_now'] = datetime.datetime.now()
-        env.update(meminfo())
-
-        self.set_header('Content-Type', 'application/json')
-        self.write(json.dumps(env, cls=JSONEncoder))
-
-class Child(object):
-
-    __slots__ = ['created', 'pid', 'vsz', 'rss', 'shr']
-
-    def __init__(self, pid):
-        self.pid = pid
-        self.created = datetime.datetime.now()
-        self.vsz = ''
-        self.rss = ''
-        self.shr = ''
-
-    def update_meminfo(self):
-        m = meminfo(self.pid)
-        for k, v in meminfo(self.pid).iteritems():
-            setattr(self, k, v)
-
-    def __eq__(self, other_pid):
-        return self.pid == other_pid
-
-    def to_dict(self):
-        return {'pid': self.pid, 'created': self.created, 'vsz': self.vsz, 'rss': self.rss, 'shr': self.shr}
-
-class ChildList(object):
-
-    def __init__(self):
-        self.pids = []
-
-    def clear(self):
-        del self.pids[:]
-
-    def add_pid(self, pid):
-        self.pids.append(Child(pid))
-
-    def remove_pid(self, pid):
-        self.pids.remove(pid)
-
-    def __iter__(self):
-        return iter(self.pids)
-
-    def to_dict(self):
-        return self.pids
-
-class ZygoteStatistics(object):
-
-    def __init__(self):
-        self.statistics_map = {}
-
-    def add_pid(self, pid, basepath):
-        self.statistics_map[pid] = {'children': ChildList(),
-                                    'time_created': datetime.datetime.now(),
-                                    'basepath': basepath}
-
-    def remove_pid(self, pid):
-        del self.statistics_map[pid]
-
-    def add_child(self, pid, child):
-        self.statistics_map[pid]['children'].add_pid(child)
-
-    def remove_child(self, pid, child):
-        self.statistics_map[pid]['children'].remove_pid(child)
-
-    def update_meminfo(self):
-        for pid, vals in self.statistics_map.iteritems():
-            vals.update(meminfo(pid))
-            for c in vals['children']:
-                c.update_meminfo()
-
-    def to_dict(self):
-        xs = []
-        for pid, v in self.statistics_map.iteritems():
-            d = v.copy()
-            d['pid'] = pid
-            xs.append(d)
-        xs.sort(key=lambda x: x['time_created'])
-        return xs
 
 class ZygoteMaster(object):
 
     log = logging.getLogger('zygote.master')
     instantiated = False
+
+    RECV_SIZE = 8096
 
     def __init__(self, sock, basepath, module, num_workers, control_port):
         if self.__class__.instantiated:
@@ -150,54 +34,57 @@ class ZygoteMaster(object):
         self.basepath = basepath
         self.module = module
         self.num_workers = num_workers
-        self.zygotes = []
-        self.zygote_statistics = ZygoteStatistics() # map of pid to various stats
-        self.write_buffers = {}
-        self.read_buffers = {}
         self.time_created = datetime.datetime.now()
 
-        JSONHandler.zygote_master = self
-        app = tornado.web.Application([('/', HTMLHandler), ('/json', JSONHandler)],
-                                      debug=False,
-                                      static_path=os.path.realpath('static'),
-                                      template_path=os.path.realpath('templates'))
-        http_server = tornado.httpserver.HTTPServer(app, io_loop=self.io_loop, no_keep_alive=True)
-        http_server.listen(control_port)
+        self.zygote_collection = accounting.ZygoteCollection()
+
+        # create an abstract unix domain socket. this socket will be used to
+        # receive messages from zygotes and their children
+        self.domain_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
+        self.domain_socket.bind('\0zygote_%d' % os.getpid())
+        self.io_loop.add_handler(self.domain_socket.fileno(), self.recv_protol_msg, self.io_loop.READ)
+
+        zygote.handlers.get_httpserver(self.io_loop, control_port, self)
+
+    def recv_protol_msg(self, fd, events):
+        assert fd == self.domain_socket.fileno()
+        data = self.domain_socket.recv(self.RECV_SIZE)
+        msg = message.Message.parse(data)
+        msg_type = type(msg)
+        if msg_type is message.MessageWorkerStart:
+            self.zygote_collection[msg.worker_ppid].add_worker(msg.pid)
+        elif msg_type is message.MessageWorkerExit:
+            zygote = self.zygote_collection[msg.pid]
+            zygote.remove_worker(msg.child_pid)
+            zygote.request_spawn() # XXX: unconditionally request a respawn
+        elif msg_type is message.MessageHTTPBegin:
+            self.register
 
     def create_zygote(self):
+        """"Create a new zygote"""
         # read the basepath symlink
         realbase = os.path.realpath(self.basepath)
-        pid, write_fd = self.base_to_write_fd(realbase)
-        if pid is not None:
+        z = self.zygote_collection.basepath_to_zygote(realbase)
+        if z is not None:
             # a zygote for this basepath already exists, reuse that
-            self.log.info('zygote for base %r already exists, reusing %d' % (realbase, pid))
-            return write_fd
+            self.log.info('zygote for base %r already exists, reusing %d' % (realbase, z.pid))
+            return z
         else:
             # the basepath has changed, create a new zygote
-            # TODO: it would actually be better to fork here (in the ZygoteMaster) so we could
-
-            read1, write1 = os.pipe()
-            read2, write2 = os.pipe()
-
             pid = os.fork()
             if pid:
                 self.log.info('started zygote %d pointed at base %r' % (pid, realbase))
-                self.zygotes.append((realbase, pid, read2, write1))
-                self.zygote_statistics.add_pid(pid, realbase)
-                self.io_loop.add_handler(read2, self.handle_read, self.io_loop.READ)
-                return write1
+                return self.zygote_collection.add_zygote(pid, realbase)
             else:
                 # Try to clean up some of the file descriptors and whatnot that
                 # exist in the parent before continuing. Strictly speaking, this
                 # isn't necessary, but it seems good to remove these resources
                 # if they're not needed in the child.
                 del self.io_loop
-                for _, _, r, w in self.zygotes:
-                    os.close(r)
-                    os.close(w)
+                self.domain_socket.close()
 
                 # create the zygote
-                z = Zygote(self.sock, realbase, self.module, read1, write2)
+                z = Zygote(self.sock, realbase, self.module)
                 z.loop()
 
     def remove_zygote(self, read_fd, write_fd):
@@ -250,8 +137,9 @@ class ZygoteMaster(object):
             del self.read_buffers[pid]
 
     def start(self):
-        w = self.create_zygote()
-        self.write(w, Message.SPAWN_CHILD * self.num_workers)
+        z = self.create_zygote()
+        for x in xrange(self.num_workers):
+            z.request_spawn()
         self.io_loop.start()
 
     def handle_read(self, fd, events):

@@ -127,3 +127,47 @@ by detecting when the current PID changes).
 
 Zygote supports IPv4 only. Support for IPv6 should be easy to add, if there's a
 need.
+
+Process Protocol
+----------------
+
+The zygote master opens an abstract unix domain socket with a name like this:
+    '\0' + "zygote_" + pid_of_master
+Messages to the master have the following format:
+    str(pid_of_sender) + ' ' + msg_type + ' ' + msg_body
+The msg_type is a single byte, by convention it corresponds to an actual ASCII
+character. See `zygote/message.py` for the different message types.
+
+The master spawns zygotes. A zygote supports two signals. Sending it `SIGTERM`
+instructs it to exit. Sending the zygote `SIGUSR1` instructs the zygote to fork
+and start a worker process. The worker processes communicate to the zygote
+master using the aforementioned abstract unix domain socket.
+
+Sending `SIGINT` or `SIGTERM` to a worker causes it to exit with status 0.
+
+When a worker is spawned, it will send a "spawn" message to the master, signaled
+by `S`. The body of the "spawn" message is the PPID of the worker (i.e. the PID
+of the zygote that spawned the worker).
+
+When a worker exits, its parent will send an "exit" message to the master,
+signaled by `X`. The body of the message will be of the format
+`str(pid_of_worker) + ' ' + str(exit_status)`. The master process will decide
+whether the zygote should respawn the worker or not (by sending `SIGUSR1` to the
+zygote if the worker should be respawned).
+
+When a worker begins processing an HTTP request, it will send a "begin http"
+message, signaled by `B`. The body of the message will contain the request
+string sent by the client, so it will be something like `GET / HTTP/1.1`.
+
+When a worker finishes processing an HTTP request, it will send an "end http"
+message, signaled by `E`. There is no body.
+
+While all of this is going on, the master processes operates a simple state
+machine to keep track of the current status of all of the zygotes and worker
+processes. It's up to the master process to know when it's safe to gracefully
+kill a worker (which it can tell because the last message from the worker was an
+`S` or an `E`). It's up to the master process to keep track of how many requests
+a worker has processed, and whether that means the worker should be killed (and
+respawned). And so on. The implicit goal of this is that all complicated process
+management logic should exist in the zygote master; there should be very little
+logic in the zygotes, or in the worker children.

@@ -1,5 +1,5 @@
 <dl>
-  <dt>created:</dt> <dd>{{start_time}}</dd> <br>
+  <dt>created:</dt> <dd>{{time_created}}</dd> <br>
   <dt>basepath:</dt> <dd>{{basepath}}</dd> <br>
   <br>
   <dt>RSS:</dt> <dd>{{rss}}</dd> <br>
@@ -23,13 +23,13 @@
 	  <th>VSZ</th>
 	  <th>RSS</th>
 	</tr>
-	{{#children}}
+	{{#workers}}
 	<tr>
 	  <td>{{pid}}</td>
-	  <td>{{created}}</td>
+	  <td>{{time_created}}</td>
 	  <td>{{vsz}}</td>
 	  <td>{{rss}}</td>
 	</tr>
-	{{/children}}
+	{{/workers}}
 </div>
 {{/zygotes}}

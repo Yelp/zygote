@@ -44,3 +44,11 @@ def get_meminfo(pid=None):
     fields = ['virt', 'res', 'shr', 'trs', 'drs', 'lrs', 'dt']
     pagesize = resource.getpagesize()
     return dict((k, int(v) * pagesize >> 10) for k, v in zip(fields, data.split()))
+
+def meminfo_fmt(pid=None):
+    d = get_meminfo(pid)
+    return {
+        'rss': '%1.2f' % (d['res'] / 1024.0),
+        'vsz': '%1.2f' % (d['virt'] / 1024.0),
+        'shr': '%1.2f' % (d['shr'] / 1024.0)
+        }
