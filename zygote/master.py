@@ -2,6 +2,7 @@ import datetime
 import fcntl
 import logging
 import os
+import signal
 import socket
 import sys
 
@@ -44,7 +45,32 @@ class ZygoteMaster(object):
         self.domain_socket.bind('\0zygote_%d' % os.getpid())
         self.io_loop.add_handler(self.domain_socket.fileno(), self.recv_protol_msg, self.io_loop.READ)
 
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(sig, self.stop)
+
         zygote.handlers.get_httpserver(self.io_loop, control_port, self)
+
+    def stop(self, signum=None, frame=None):
+
+        def safe_kill(pid):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+
+        pids = set()
+        for zygote in self.zygote_collection:
+            for worker in zygote.workers():
+                safe_kill(worker.pid)
+            pids.add(zygote.pid)
+            safe_kill(zygote.pid)
+
+        while pids:
+            pid, status = os.wait()
+            if pid in pids:
+                pids.remove(pid)
+
+        sys.exit(0)
 
     def recv_protol_msg(self, fd, events):
         """Callback for messages received on the domain_socket"""
@@ -62,11 +88,10 @@ class ZygoteMaster(object):
             zygote.request_spawn() # XXX: unconditionally request a respawn
         elif msg_type is message.MessageHTTPBegin:
             worker = self.zygote_collection.get_worker(msg.pid)
-            worker.request_count += 1
-            worker.http = msg.payload
+            worker.start_request(msg.remote_ip, msg.http_line)
         elif msg_type is message.MessageHTTPEnd:
             worker = self.zygote_collection.get_worker(msg.pid)
-            worker.http = None
+            worker.end_request()
 
     def create_zygote(self):
         """"Create a new zygote"""

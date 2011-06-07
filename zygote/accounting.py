@@ -3,9 +3,14 @@ import errno
 import os
 import signal
 import socket
+import time
 
 from zygote import message
 from zygote.util import meminfo_fmt
+
+def format_millis(v):
+    if v is not None:
+        return '%1.1f' % (v * 1000.0)
 
 class Worker(object):
 
@@ -15,7 +20,9 @@ class Worker(object):
         self.vsz = ''
         self.rss = ''
         self.shr = ''
+        self.remote_ip = None
         self.request_count = 0
+        self.request_started = None
         self.http = None
 
     def update_meminfo(self):
@@ -25,8 +32,34 @@ class Worker(object):
     def __eq__(self, other_pid):
         return self.pid == other_pid
 
+    def start_request(self, remote_ip, http):
+        self.remote_ip = remote_ip
+        self.request_started = time.time()
+        self.request_count += 1
+        self.http = http
+
+    def end_request(self):
+        self.remote_ip = None
+        self.http = None
+        self.request_started = None
+
     def to_dict(self):
-        return {'pid': self.pid, 'vsz': self.vsz, 'rss': self.rss, 'shr': self.shr, 'time_created': self.time_created, 'request_count': self.request_count, 'http': self.http}
+        d = {'pid': self.pid,
+             'vsz': self.vsz,
+             'rss': self.rss,
+             'shr': self.shr,
+             'time_created': self.time_created,
+             'remote_ip': self.remote_ip,
+             'request_count': self.request_count,
+             'http': self.http}
+        if self.request_started is None:
+            d['elapsed'] = None
+            d['elapsed_formatted'] = None
+        else:
+            now = time.time()
+            d['elapsed'] = now - self.request_started
+            d['elapsed_formatted'] = format_millis(d['elapsed'])
+        return d
 
     def request_exit(self):
         """Instruct this worker to exit"""
@@ -136,3 +169,6 @@ class ZygoteCollection(object):
 
     def to_dict(self):
         return {'zygotes': self.zygote_map.values()}
+
+    def pids(self):
+        return self.zygote_map.keys()

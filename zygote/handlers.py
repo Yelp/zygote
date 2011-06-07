@@ -20,6 +20,15 @@ class JSONEncoder(json.JSONEncoder):
         else:
             return super(JSONEncoder, self).default(obj)
 
+class TemplateHandler(tornado.web.RequestHandler):
+
+    def get(self):
+        self.set_header('Content-Type', 'text/plain')
+        self.set_header('Cache-Control', 'max-age=0')
+        static_path = self.application.settings['static_path']
+        with open(os.path.join(static_path, 'template.html')) as template:
+            self.write(template.read())
+
 class HTMLHandler(tornado.web.RequestHandler):
 
     def get(self):
@@ -33,7 +42,6 @@ class JSONHandler(tornado.web.RequestHandler):
         env = self.zygote_master.zygote_collection.to_dict()
         env['basepath'] = self.zygote_master.basepath
         env['time_created'] = self.zygote_master.time_created
-        env['time_now'] = datetime.datetime.now()
         env.update(zygote.util.meminfo_fmt())
 
         self.set_header('Content-Type', 'application/json')
@@ -41,7 +49,9 @@ class JSONHandler(tornado.web.RequestHandler):
 
 def get_httpserver(io_loop, port, zygote_master):
     JSONHandler.zygote_master = zygote_master
-    app = tornado.web.Application([('/', HTMLHandler), ('/json', JSONHandler)],
+    app = tornado.web.Application([('/', HTMLHandler),
+                                   ('/json', JSONHandler),
+                                   ('/template', TemplateHandler)],
                                   debug=False,
                                   static_path=os.path.realpath('static'),
                                   template_path=os.path.realpath('templates'))

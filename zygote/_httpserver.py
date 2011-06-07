@@ -301,25 +301,17 @@ class HTTPConnection(object):
 
     def finish(self):
         if self._close_callback is not None:
-            print 'in finish'
-            #self.stream.io_loop.remove_handler(self.stream.socket.fileno())
-            print 'removed hadnler'
             self.stream.set_close_callback(self._close_callback)
-            print 'set close callback'
         assert self._request, "Request closed"
         self._request_finished = True
         if not self.stream.writing():
             self._finish_request()
-        else:
-            print 'stream still writing'
 
     def _on_write_complete(self):
-        print 'on write complete'
         if self._request_finished:
             self._finish_request()
 
     def _finish_request(self):
-        print 'in _finish_request'
         if self.no_keep_alive:
             disconnect = True
         else:
@@ -334,7 +326,6 @@ class HTTPConnection(object):
         self._request = None
         self._request_finished = False
         if disconnect:
-            print 'closing stream'
             self.stream.close()
             return
         self.stream.read_until("\r\n\r\n", self._header_callback)
@@ -365,7 +356,7 @@ class HTTPConnection(object):
                 return
 
             if self._headers_callback is not None:
-                self._headers_callback(start_line)
+                self._headers_callback('%s %s' % (self._request.remote_ip, start_line))
             self.request_callback(self._request)
         except _BadRequestException, e:
             logging.info("Malformed HTTP request from %s: %s",
@@ -477,7 +468,7 @@ class HTTPRequest(object):
             self.remote_ip = remote_ip
             if protocol:
                 self.protocol = protocol
-            elif connection and isinstance(connection.stream, 
+            elif connection and isinstance(connection.stream,
                                            iostream.SSLIOStream):
                 self.protocol = "https"
             else:

@@ -1,3 +1,4 @@
+import errno
 import logging
 import os
 import signal
@@ -12,6 +13,13 @@ from .util import setproctitle
 from .message import Message, MessageCreateWorker, MessageWorkerStart, MessageWorkerExit, MessageHTTPEnd, MessageHTTPBegin
 
 log = logging.getLogger(__name__)
+
+
+def establish_signal_handlers():
+    def zygote_exit(signum, frame):
+        sys.exit(0)
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, zygote_exit)
 
 class Zygote(object):
     """A Zygote is a process that manages children worker processes.
@@ -39,11 +47,7 @@ class Zygote(object):
 
         self.get_application = t.get_application
 
-        def zygote_exit(signum, frame):
-            sys.exit(0)
-
-        signal.signal(signal.SIGINT, zygote_exit)
-        signal.signal(signal.SIGTERM, zygote_exit)
+        establish_signal_handlers()
 
         self.control_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
         self.control_socket.bind('\0zygote_%d' % os.getpid())
@@ -82,16 +86,25 @@ class Zygote(object):
     def loop(self):
         self.io_loop.start()
 
+    def notify(self, msg_cls, body=''):
+        try:
+            self.notify_socket.send(msg_cls.emit(str(body)))
+        except socket.error, e:
+            if e.errno == errno.ENOTCONN:
+                sys.exit(0)
+            else:
+                raise
+
     def spawn_worker(self):
         pid = os.fork()
         if not pid:
+            establish_signal_handlers()
             def on_line(line):
-                self.notify_socket.send(MessageHTTPBegin.emit(line))
+                self.notify(MessageHTTPBegin, line)
             def on_close():
-                print 'in onclose'
-                self.notify_socket.send(MessageHTTPEnd.emit(''))
-                print 'done with onclose'
-            self.notify(MessageWorkerStart.emit(str(os.getppid())))
+                self.notify(MessageHTTPEnd)
+
+            self.notify(MessageWorkerStart, os.getppid())
             setproctitle('zygote-worker version=%s' % self.version)
             io_loop = tornado.ioloop.IOLoop()
             app = self.get_application()

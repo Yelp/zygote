@@ -17,3 +17,5 @@ a:visited { color: #babafa; }
 
 .ft { margin-top: 1em; }
 .vgap { margin-top: 1em; }
+
+tr:nth-child(even) { background-color: #2e2e2e; }

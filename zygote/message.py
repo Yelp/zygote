@@ -67,7 +67,7 @@ class MessageHTTPBegin(Message):
 
     def __init__(self, pid, body):
         super(MessageHTTPBegin, self).__init__(pid)
-        self.payload = body
+        self.remote_ip, self.http_line = body.split(' ', 1)
 
 class MessageHTTPEnd(Message):
 
