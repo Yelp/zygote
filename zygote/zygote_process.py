@@ -4,6 +4,7 @@ import os
 import signal
 import socket
 import sys
+import time
 
 import tornado.ioloop
 import tornado.httpserver
@@ -58,7 +59,7 @@ class Zygote(object):
 
         signal.signal(signal.SIGCHLD, self.reap_child)
 
-        log.debug('new zygote started')
+        log.info('new zygote started')
 
     def handle_control(self, fd, events):
         assert fd == self.control_socket.fileno()
@@ -77,11 +78,8 @@ class Zygote(object):
                 break
 
             status_code = os.WEXITSTATUS(status)
-            log.info('reaped child %d, status %d' % (pid, status_code))
-            self.notify(MessageWorkerExit.emit('%d %d' % (pid, status_code)))
-
-    def notify(self, msg):
-        self.notify_socket.send(msg)
+            log.info('reaped child %d, status %d', pid, status_code)
+            self.notify(MessageWorkerExit, '%d %d' % (pid, status_code))
 
     def loop(self):
         self.io_loop.start()
@@ -96,6 +94,7 @@ class Zygote(object):
                 raise
 
     def spawn_worker(self):
+        time_created = time.time()
         pid = os.fork()
         if not pid:
             establish_signal_handlers()
@@ -104,7 +103,7 @@ class Zygote(object):
             def on_close():
                 self.notify(MessageHTTPEnd)
 
-            self.notify(MessageWorkerStart, os.getppid())
+            self.notify(MessageWorkerStart, '%d %d' % (int(time_created * 1e6), os.getppid()))
             setproctitle('zygote-worker version=%s' % self.version)
             io_loop = tornado.ioloop.IOLoop()
             app = self.get_application()

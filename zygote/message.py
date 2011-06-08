@@ -48,7 +48,9 @@ class MessageWorkerStart(Message):
 
     def __init__(self, pid, body):
         super(MessageWorkerStart, self).__init__(pid)
-        self.worker_ppid = int(body)
+        created, ppid = body.split(' ')
+        self.time_created = int(created)
+        self.worker_ppid = int(ppid)
 
 class MessageWorkerExit(Message):
 

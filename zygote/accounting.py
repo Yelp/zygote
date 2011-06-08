@@ -14,8 +14,11 @@ def format_millis(v):
 
 class Worker(object):
 
-    def __init__(self, pid):
-        self.time_created = datetime.datetime.now()
+    def __init__(self, pid, time_created=None):
+        if time_created:
+            self.time_created = datetime.datetime.fromtimestamp(time_created / 1e6)
+        else:
+            self.time_created = datetime.datetime.now()
         self.pid = pid
         self.vsz = ''
         self.rss = ''
@@ -100,8 +103,8 @@ class Zygote(object):
     def workers(self):
         return self.worker_map.values()
 
-    def add_worker(self, pid):
-        worker = Worker(pid)
+    def add_worker(self, pid, time_created=None):
+        worker = Worker(pid, time_created)
         self.worker_map[pid] = worker
 
     def remove_worker(self, pid):
@@ -127,7 +130,7 @@ class Zygote(object):
         return {
             'basepath': self.basepath,
             'pid': self.pid,
-            'workers': self.worker_map.values(),
+            'workers': sorted(self.worker_map.values(), key=lambda x: x.time_created),
             'vsz': self.vsz,
             'rss': self.rss,
             'shr': self.shr,
@@ -167,8 +170,11 @@ class ZygoteCollection(object):
     def __getitem__(self, pid):
         return self.zygote_map[pid]
 
+    def __iter__(self):
+        return self.zygote_map.itervalues()
+
     def to_dict(self):
-        return {'zygotes': self.zygote_map.values()}
+        return {'zygotes': sorted(self.zygote_map.values(), key=lambda x: x.time_created)}
 
     def pids(self):
         return self.zygote_map.keys()

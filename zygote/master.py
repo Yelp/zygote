@@ -16,7 +16,6 @@ from zygote import message
 from zygote import accounting
 from zygote.zygote_process import Zygote
 
-
 class ZygoteMaster(object):
 
     log = logging.getLogger('zygote.master')
@@ -74,14 +73,13 @@ class ZygoteMaster(object):
 
     def recv_protol_msg(self, fd, events):
         """Callback for messages received on the domain_socket"""
-
         assert fd == self.domain_socket.fileno()
         data = self.domain_socket.recv(self.RECV_SIZE)
         msg = message.Message.parse(data)
         msg_type = type(msg)
-        self.log.debug('received message of type %s' % (msg_type.__name__,))
+        self.log.debug('received message of type %s', msg_type.__name__)
         if msg_type is message.MessageWorkerStart:
-            self.zygote_collection[msg.worker_ppid].add_worker(msg.pid)
+            self.zygote_collection[msg.worker_ppid].add_worker(msg.pid, msg.time_created)
         elif msg_type is message.MessageWorkerExit:
             zygote = self.zygote_collection[msg.pid]
             zygote.remove_worker(msg.child_pid)
@@ -100,13 +98,13 @@ class ZygoteMaster(object):
         z = self.zygote_collection.basepath_to_zygote(realbase)
         if z is not None:
             # a zygote for this basepath already exists, reuse that
-            self.log.info('zygote for base %r already exists, reusing %d' % (realbase, z.pid))
+            self.log.info('zygote for base %r already exists, reusing %d', realbase, z.pid)
             return z
         else:
             # the basepath has changed, create a new zygote
             pid = os.fork()
             if pid:
-                self.log.info('started zygote %d pointed at base %r' % (pid, realbase))
+                self.log.info('started zygote %d pointed at base %r', pid, realbase)
                 return self.zygote_collection.add_zygote(pid, realbase)
             else:
                 # Try to clean up some of the file descriptors and whatnot that
@@ -137,13 +135,17 @@ def main(opts, module):
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.DEBUG if opts.debug else logging.INFO)
         console_handler.setFormatter(formatter)
-        logging.root.addHandler(console_handler)
-        #log.addHandler(console_handler)
+        log.addHandler(console_handler)
+
+    if not logging.root.handlers:
+        logging.root.addHandler(logging.NullHandler())
 
     if opts.debug:
         logging.root.setLevel(logging.DEBUG)
+        log.setLevel(logging.DEBUG)
     else:
         logging.root.setLevel(logging.INFO)
+        log.setLevel(logging.INFO)
     log.info('main started')
 
     # Create the TCP listen socket
