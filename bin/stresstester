@@ -1,0 +1,44 @@
+#!/usr/bin/env python
+
+import optparse
+import sys
+import time
+
+import tornado.ioloop
+import tornado.httpclient
+
+class ClientLoop(object):
+
+    def __init__(self, url, io_loop, delay=0):
+        self.url = url
+        self.delay = delay
+        self.http_client = tornado.httpclient.AsyncHTTPClient(io_loop)
+
+    def fetch(self):
+        self.http_client.fetch(self.url, self.callback)
+
+    def callback(self, response):
+        io_loop = self.http_client.io_loop
+        if self.delay:
+            io_loop.add_timeout(time.time() + self.delay, self.fetch)
+        else:
+            io_loop.add_callback(self.fetch)
+
+if __name__ == '__main__':
+    parser = optparse.OptionParser()
+    parser.add_option('-c', '--concurrency', type='int', default=4, help='The number of concurrent clients to run')
+    parser.add_option('-d', '--delay', type='float', default=0, help='The delay between fetches')
+    opts, args = parser.parse_args()
+    if len(args) != 1:
+        parser.error('must pass exactly one url as an arg')
+        sys.exit(1)
+    url = args[0]
+
+    io_loop = tornado.ioloop.IOLoop.instance()
+    for x in xrange(opts.concurrency):
+        ClientLoop(url, io_loop, opts.delay).fetch()
+    try:
+        io_loop.start()
+    except KeyboardInterrupt:
+        pass
+

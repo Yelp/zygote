@@ -13,11 +13,16 @@ from ._httpserver import HTTPServer
 from .util import setproctitle
 from .message import Message, MessageCreateWorker, MessageWorkerStart, MessageWorkerExit, MessageHTTPEnd, MessageHTTPBegin
 
-log = logging.getLogger(__name__)
 
 
-def establish_signal_handlers():
+def establish_signal_handlers(logger):
     def zygote_exit(signum, frame):
+        if signum == signal.SIGINT:
+            logger.info('received SIGINT, exiting')
+        elif signum == signal.SIGTERM:
+            logger.info('received SIGTERM, exiting')
+        else:
+            logger.info('received signal %d, exiting', signum)
         sys.exit(0)
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, zygote_exit)
@@ -31,6 +36,8 @@ class Zygote(object):
      * imports the target module, to pre-fork load resources
      * creates read and write pipes to the parent process
     """
+
+    log = logging.getLogger('zygote.process')
 
     RECV_SIZE = 8096
 
@@ -48,7 +55,7 @@ class Zygote(object):
 
         self.get_application = t.get_application
 
-        establish_signal_handlers()
+        establish_signal_handlers(self.log)
 
         self.control_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
         self.control_socket.bind('\0zygote_%d' % os.getpid())
@@ -59,7 +66,7 @@ class Zygote(object):
 
         signal.signal(signal.SIGCHLD, self.reap_child)
 
-        log.info('new zygote started')
+        self.log.info('new zygote started')
 
     def handle_control(self, fd, events):
         assert fd == self.control_socket.fileno()
@@ -73,12 +80,17 @@ class Zygote(object):
     def reap_child(self, signum, frame):
         assert signum == signal.SIGCHLD
         while True:
-            pid, status = os.waitpid(0, os.WNOHANG)
+            try:
+                pid, status = os.waitpid(0, os.WNOHANG)
+            except OSError, e:
+                if e.errno == errno.ECHILD:
+                    break
+                raise
             if pid == 0:
                 break
 
             status_code = os.WEXITSTATUS(status)
-            log.info('reaped child %d, status %d', pid, status_code)
+            self.log.info('reaped worker %d, status %d', pid, status_code)
             self.notify(MessageWorkerExit, '%d %d' % (pid, status_code))
 
     def loop(self):
@@ -97,10 +109,14 @@ class Zygote(object):
         time_created = time.time()
         pid = os.fork()
         if not pid:
-            establish_signal_handlers()
+
+            log = logging.getLogger('zygote.worker')
+            establish_signal_handlers(log)
             def on_line(line):
+                log.debug('sending MessageHTTPBegin')
                 self.notify(MessageHTTPBegin, line)
             def on_close():
+                log.debug('sending MessageHTTPEnd')
                 self.notify(MessageHTTPEnd)
 
             self.notify(MessageWorkerStart, '%d %d' % (int(time_created * 1e6), os.getppid()))

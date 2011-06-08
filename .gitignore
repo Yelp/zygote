@@ -1,2 +1,4 @@
 *.py[co]
 *~
+current
+tmp_*

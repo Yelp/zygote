@@ -40,6 +40,7 @@ class JSONHandler(tornado.web.RequestHandler):
 
         self.zygote_master.zygote_collection.update_meminfo()
         env = self.zygote_master.zygote_collection.to_dict()
+        env['pid'] = os.getpid()
         env['basepath'] = self.zygote_master.basepath
         env['time_created'] = self.zygote_master.time_created
         env.update(zygote.util.meminfo_fmt())

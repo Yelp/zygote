@@ -1,0 +1,18 @@
+#!/usr/bin/env python
+
+import os
+import shutil
+import signal
+import sys
+
+if __name__ == '__main__':
+    revision = os.urandom(4).encode('hex')
+    directory = './tmp_%s' % revision
+    os.makedirs(directory)
+    shutil.copyfile('example/example.py', os.path.join(directory, 'example.py'))
+    if os.path.exists('current'):
+        os.unlink('current')
+    os.symlink(directory, 'current')
+    if len(sys.argv) >= 2:
+        os.kill(int(sys.argv[1]), signal.SIGHUP)
+    print directory

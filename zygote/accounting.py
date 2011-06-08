@@ -126,6 +126,10 @@ class Zygote(object):
         """Instruct this zygote to spawn a new worker"""
         self.control_socket.send(message.MessageCreateWorker.emit(''))
 
+    @property
+    def worker_count(self):
+        return len(self.worker_map)
+
     def to_dict(self):
         return {
             'basepath': self.basepath,
@@ -172,6 +176,9 @@ class ZygoteCollection(object):
 
     def __iter__(self):
         return self.zygote_map.itervalues()
+
+    def other_zygotes(self, target):
+        return [z for z in self.zygote_map.itervalues() if z != target]
 
     def to_dict(self):
         return {'zygotes': sorted(self.zygote_map.values(), key=lambda x: x.time_created)}

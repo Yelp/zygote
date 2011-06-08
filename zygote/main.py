@@ -13,6 +13,7 @@ if __name__ == '__main__':
     parser.add_option('-p', '--port', type='int', default=0, help='The port to bind on')
     parser.add_option('-i', '--interface', default='', help='The interface to bind on')
     parser.add_option('--num-workers', type='int', default=8, help='How many workers to run')
+    parser.add_option('--max-requests', type='int', default=None, help='The maximum number of requests a child can run')
     opts, args = parser.parse_args()
 
     if not opts.basepath:
