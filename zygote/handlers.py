@@ -1,6 +1,7 @@
 import datetime
 import os
 import time
+import traceback
 
 import tornado.web
 import zygote.util
@@ -20,7 +21,16 @@ class JSONEncoder(json.JSONEncoder):
         else:
             return super(JSONEncoder, self).default(obj)
 
-class TemplateHandler(tornado.web.RequestHandler):
+class RequestHandler(tornado.web.RequestHandler):
+
+    def get_error_html(self, status_code, **kwargs):
+        if 500 <= status_code <= 599:
+            self.set_header('Content-Type', 'text/plain')
+            return traceback.format_exc()
+        else:
+            return super(RequestHandler, self).get_error_html(status_code, **kwargs)
+
+class TemplateHandler(RequestHandler):
 
     def get(self):
         self.set_header('Content-Type', 'text/plain')
@@ -29,12 +39,12 @@ class TemplateHandler(tornado.web.RequestHandler):
         with open(os.path.join(static_path, 'template.html')) as template:
             self.write(template.read())
 
-class HTMLHandler(tornado.web.RequestHandler):
+class HTMLHandler(RequestHandler):
 
     def get(self):
         self.render('home.html')
 
-class JSONHandler(tornado.web.RequestHandler):
+class JSONHandler(RequestHandler):
 
     def get(self):
 
