@@ -6,53 +6,44 @@ applications. The problem is attempts to solve is the ability to deploy new
 code, and have HTTP workers efficiently move over to serving the new code,
 without causing any service interruptions.
 
-Background Problem
-------------------
+Let's say you're serving your application, and the currently deployed version is
+called `A`. You're trying to deploy a new version of your web app, and that
+version is called `B`. The way you want it to work is like this:
 
-It's easier to explain what Zygote does by explaining the background problem and
-assumptions it makes. Suppose I have a web application called `blog` that I'm
-serving requests from. I have deploy scripts that deploy the code to a directory
-like `/var/blog/5d0959` and `/var/blog/d2dd1`, where the part like `5d0959` is
-constructed based on the git commit that the deployment is for (this could just
-as easily be a CVS/SVN/Mercurial revision, etc.). The active code version is
-handled with a symlink such as `/var/blog/current` that points to the actual
-currently deployed version of the code.
+ * A new Python interpreter `P` starts up, imports code from `B` and does all of
+   the static initialization and loads modules. This process should only happen
+   once.
 
-This is a pretty standard technique -- it allows easily rolling back code (just
-change `/var/blog/current` to point at an older revision), and it ensures that
-deploys are atomic, since the symlink won't be updated until all code is fully
-copied over.
+ * New HTTP workers are created by forking `P`. That way new workers don't need
+   to reimport lots of code (so starting a worker is significantly cheaper in
+   terms of disk I/O and CPU time), and workers can share static data structures
+   (so starting a new worker consumes significantly less memory).
 
-Also, suppose that you are running your web server in a configuration where you
-want only at most N processes working. For instance, you may determine that your
-webserver can run 100 instances of your application at once, without risk of
-swapping.
+ * In progress requests that are being run from the `A` version of the code
+   should be allowed to complete, and not be interrupted; deploying new code
+   should not cause anyone to get an HTTP 500 response, or even be noticeable by
+   users.
 
-When deploying a new revision of the code (say you're going from revision `A` to
-revision `B`), you start off with 100 copies of `A` and want to end up with 100
-copies of `B`. To do this without service interruption, you can't just kill all
-100 copies of `A` and start 100 copies of `B` -- then there's a brief period
-where no versions of the code are running, or not enough workers are
-running. You also can't just start 100 copies of `B` first, and then kill the
-copies of `A` -- if you do this you'll end up swapping (or you'll need to have
-2x as much RAM in every machine, to account for this). The ideal situation is
-where the code transitions over to `B` as web workers servicing `A` requests are
-free, so you go from 100 `A` and 0 `B` to 90 `A` and 10 `B`, and then 80 `A` and
-20 `B`, etc. Additionally, it's best if you can pre-load the code for a copy,
-and then use a pre-fork model to ensure that when you spawn 100 copies of `B`,
-you're only importing all of that code one time.
+ * The deploy code needs to be cognizant of how many HTTP workers the system is
+   capable of running (usually this means don't run more workers than you have
+   RAM allocated for), so if a machine is capable of supporting 200 workers, and
+   100 of them are serving requests for `A` at the time of the deploy, at first
+   the 100 idle `A` workers can be killed and 100 `B` workers can be spawned,
+   and then `A` workers are killed and `B` workers are spawned as the `A`
+   workers complete their requests.
 
-Zygote implements the versioning transition described above, as well as
-pre-forking.
+This is what Zygote does. Zygote has an embedded HTTP server based on the one
+provided by Tornado, but this is complementary to a real, full-fledged HTTP
+server like Apache or Nginx -- Zygote's expertise is just in managing Python web
+processes. It's OK to run Apache or Nginx in front of Zygote.
 
 How It Works
 ------------
 
-The concept of zygote processes on Unix systems is not new; see Chromium's
+The concept of "zygote" processes on Unix systems is not new; see Chromium's
 [LinuxZygote](http://code.google.com/p/chromium/wiki/LinuxZygote) wiki page for
-a description of how the Chromium browser does a similar thing. The basic idea
-is that in a zygote model, you have a process tree that looks something like
-this:
+a description of how they're used in the Chromium browser. In the Zygote process
+model there is a process tree that looks something like this:
 
     zygote-master
 	 \
@@ -60,24 +51,28 @@ this:
       |     `--- worker
       |      --- worker
       |
-      `---- zygote B
+      `--- zygote B
             `--- worker
              --- worker
 
+(Some other models like HAProxy and Chrome have a slightly different, flatter
+process tree, but this is how it works in Zygote).
+
 When the master zygote process wants to spawn a copy of `B`, it sends an
 instruction over a Unix pipe to `zygote B` that says "fork yourself, and run a
-new worker". Likewise, if the zygote master thinks that `A` is running too many
-workers, it can send `zygote A` an instruction that says "kill one of your
-workers". Because the workers are created using the `fork(2)` system call, the
-zygotes can import Python modules once and the workers spawned will
-automatically have all of the code available to them, initialized and in memory.
+new worker". Because the workers are created using the `fork(2)` system call,
+the zygotes can import Python modules once and the workers spawned will
+automatically have all of the code available to them, initialized and in
+memory. Not only is this faster, it also saves a lot of memory compared to
+reimporting the code multiple times, and having identical pages in memory that
+are unshared.
 
-Transitioning code from `A` to `B` as described in the previous instruction just
-consists of sending these kill/spawn requests to `zygote A` and `zygote B` in
-the right order, and at an appropriate speed.
+Transitioning code from `A` to `B` as described in the previous section consists
+of the master killing idle workers and instructing the appropriate zygote to
+fork.
 
-Internally, communication between the master and the zygotes is done using
-standard Unix pipes.
+Internally, communication between the different processes is done using abstract
+unix domain sockets.
 
 If you use a command like `pstree` or `ps -eFH` you can verify that the process
 tree looks as expected. Additionally, if you have the `setproctitle` Python

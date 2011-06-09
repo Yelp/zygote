@@ -85,7 +85,6 @@ class ZygoteMaster(object):
         pids = set()
         for zygote in self.zygote_collection:
             for worker in zygote.workers():
-                print 'killing worker %d' % (worker.pid,)
                 safe_kill(worker.pid)
             pids.add(zygote.pid)
             safe_kill(zygote.pid)
@@ -103,21 +102,15 @@ class ZygoteMaster(object):
         data = self.domain_socket.recv(self.RECV_SIZE)
         msg = message.Message.parse(data)
         msg_type = type(msg)
-        if msg_type not in (message.MessageHTTPBegin, message.MessageHTTPEnd):
-            print msg_type
         self.log.debug('received message of type %s from pid %d', msg_type.__name__, msg.pid)
         if msg_type is message.MessageWorkerStart:
             self.zygote_collection[msg.worker_ppid].add_worker(msg.pid, msg.time_created)
         elif msg_type is message.MessageWorkerExit:
             zygote = self.zygote_collection[msg.pid]
             zygote.remove_worker(msg.child_pid)
-            print 'worker_coutn is %r' % zygote.worker_count
-            print 'zygote is %d %r' % (zygote.pid, zygote)
-            print 'current_zygote is %d %r' % (self.current_zygote.pid, self.current_zygote)
 
             if zygote == self.current_zygote:
                 # request a respawn
-                print 'requesting respawn'
                 zygote.request_spawn()
             else:
                 self.current_zygote.request_spawn()
