@@ -35,7 +35,7 @@ class ZygoteMaster(object):
     WORKER_TRANSITION_INTERVAL = 1.0 # number of seconds to poll when
                                      # transitioning workers
 
-    def __init__(self, sock, basepath, module, num_workers, control_port, max_requests=None):
+    def __init__(self, sock, basepath, module, num_workers, control_port, max_requests=None, zygote_base=None):
         if self.__class__.instantiated:
             self.log.error('cannot instantiate zygote master more than once')
             sys.exit(1)
@@ -63,7 +63,7 @@ class ZygoteMaster(object):
         for sig in (signal.SIGINT, signal.SIGTERM):
             signal.signal(sig, self.stop)
 
-        zygote.handlers.get_httpserver(self.io_loop, control_port, self)
+        zygote.handlers.get_httpserver(self.io_loop, control_port, self, zygote_base=zygote_base)
 
     def reap_child(self, signum, frame):
         assert signum == signal.SIGCHLD
@@ -236,5 +236,5 @@ def main(opts, module):
     sock.bind((opts.interface, opts.port))
     sock.listen(128)
 
-    master = ZygoteMaster(sock, opts.basepath, module, opts.num_workers, opts.control_port, opts.max_requests)
+    master = ZygoteMaster(sock, opts.basepath, module, opts.num_workers, opts.control_port, opts.max_requests, opts.zygote_base)
     master.start()
