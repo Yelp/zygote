@@ -18,6 +18,13 @@ from zygote import message
 from zygote import accounting
 from zygote.zygote_process import Zygote
 
+if hasattr(logging, 'NullHandler'):
+    NullHandler = logging.NullHandler
+else:
+    class NullHandler(logging.Handler):
+        def emit(self, record):
+            pass
+
 class ZygoteMaster(object):
 
     log = logging.getLogger('zygote.master')
@@ -209,7 +216,7 @@ def main(opts, module):
         log.addHandler(console_handler)
 
     if not logging.root.handlers:
-        logging.root.addHandler(logging.NullHandler())
+        logging.root.addHandler(NullHandler())
 
     if opts.debug:
         logging.root.setLevel(logging.DEBUG)
