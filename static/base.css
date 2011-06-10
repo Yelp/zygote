@@ -15,6 +15,11 @@ h3 { color: #f9e181; font-weight: normal; }
 a { color: #babafa; }
 a:visited { color: #babafa; }
 
+th { padding-right: 1.5em; }
+td { padding-right: 1.5em; }
+
+.right { text-align: right; }
+
 .ft { margin-top: 1em; }
 .vgap { margin-top: 1em; }
 

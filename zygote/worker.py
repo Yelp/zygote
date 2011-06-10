@@ -13,8 +13,6 @@ from ._httpserver import HTTPServer
 from .util import setproctitle
 from .message import Message, MessageCreateWorker, MessageWorkerStart, MessageWorkerExit, MessageHTTPEnd, MessageHTTPBegin
 
-
-
 def establish_signal_handlers(logger):
     def zygote_exit(signum, frame):
         if signum == signal.SIGINT:
@@ -27,7 +25,7 @@ def establish_signal_handlers(logger):
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, zygote_exit)
 
-class Zygote(object):
+class ZygoteWorker(object):
     """A Zygote is a process that manages children worker processes.
 
     When the zygote process is instantiated it does a few things:

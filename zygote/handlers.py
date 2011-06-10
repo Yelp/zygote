@@ -1,5 +1,6 @@
 import datetime
 import os
+import socket
 import time
 import traceback
 
@@ -50,6 +51,8 @@ class JSONHandler(RequestHandler):
 
         self.zygote_master.zygote_collection.update_meminfo()
         env = self.zygote_master.zygote_collection.to_dict()
+        env['hostname'] = socket.gethostname()
+        env['interface'], env['port'] = self.application.settings['worker_sockname']
         env['pid'] = os.getpid()
         env['basepath'] = self.zygote_master.basepath
         env['time_created'] = self.zygote_master.time_created
@@ -73,6 +76,7 @@ def get_httpserver(io_loop, port, zygote_master, zygote_base=None):
                                   debug=False,
                                   static_path=static_path,
                                   template_path=template_path)
+    app.settings['worker_sockname'] = zygote_master.sock.getsockname()
     http_server = tornado.httpserver.HTTPServer(app, io_loop=io_loop, no_keep_alive=True)
     http_server.listen(port)
     return http_server

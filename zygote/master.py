@@ -16,7 +16,7 @@ import zygote.util
 import zygote.handlers
 from zygote import message
 from zygote import accounting
-from zygote.zygote_process import Zygote
+from zygote.worker import ZygoteWorker
 
 if hasattr(logging, 'NullHandler'):
     NullHandler = logging.NullHandler
@@ -193,7 +193,7 @@ class ZygoteMaster(object):
                 self.domain_socket.close()
 
                 # create the zygote
-                z = Zygote(self.sock, realbase, self.module)
+                z = ZygoteWorker(self.sock, realbase, self.module)
                 z.loop()
 
     def start(self):
