@@ -10,8 +10,9 @@ import tornado.ioloop
 import tornado.httpserver
 from ._httpserver import HTTPServer
 
-from .util import setproctitle
+from .util import setproctitle, AFUnixSender
 from .message import Message, MessageCreateWorker, MessageWorkerStart, MessageWorkerExit, MessageHTTPEnd, MessageHTTPBegin
+
 
 def establish_signal_handlers(logger):
     def zygote_exit(signum, frame):
@@ -35,7 +36,7 @@ class ZygoteWorker(object):
      * creates read and write pipes to the parent process
     """
 
-    log = logging.getLogger('zygote.process')
+    log = logging.getLogger('zygote.worker.zygote_process')
 
     RECV_SIZE = 8096
 
@@ -57,9 +58,10 @@ class ZygoteWorker(object):
 
         self.control_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
         self.control_socket.bind('\0zygote_%d' % os.getpid())
+        #self.io_loop._set_nonblocking(self.control_socket)
         self.io_loop.add_handler(self.control_socket.fileno(), self.handle_control, self.io_loop.READ)
 
-        self.notify_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
+        self.notify_socket = AFUnixSender(self.io_loop)
         self.notify_socket.connect('\0zygote_%d' % os.getppid())
 
         signal.signal(signal.SIGCHLD, self.reap_child)
@@ -95,20 +97,15 @@ class ZygoteWorker(object):
         self.io_loop.start()
 
     def notify(self, msg_cls, body=''):
-        try:
-            self.notify_socket.send(msg_cls.emit(str(body)))
-        except socket.error, e:
-            if e.errno == errno.ENOTCONN:
-                sys.exit(0)
-            else:
-                raise
+        """Send a message to the zygote master"""
+        self.notify_socket.send(msg_cls.emit(str(body)))
 
     def spawn_worker(self):
         time_created = time.time()
         pid = os.fork()
         if not pid:
 
-            log = logging.getLogger('zygote.worker')
+            log = logging.getLogger('zygote.worker.worker_process')
             establish_signal_handlers(log)
             def on_line(line):
                 log.debug('sending MessageHTTPBegin')
@@ -122,6 +119,7 @@ class ZygoteWorker(object):
             io_loop = tornado.ioloop.IOLoop()
             app = self.get_application()
             #http_server = tornado.httpserver.HTTPServer(app, io_loop=io_loop, no_keep_alive=True)
+            # TODO: make keep-alive servers work
             http_server = HTTPServer(app, io_loop=io_loop, no_keep_alive=True, close_callback=on_close, headers_callback=on_line)
             http_server._socket = self.sock
             io_loop.add_handler(self.sock.fileno(), http_server._handle_events, io_loop.READ)

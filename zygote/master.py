@@ -12,8 +12,9 @@ import tornado.ioloop
 import tornado.httpserver
 import tornado.web
 
-import zygote.util
 import zygote.handlers
+
+from .util import safe_kill, close_fds, setproctitle
 from zygote import message
 from zygote import accounting
 from zygote.worker import ZygoteWorker
@@ -25,19 +26,20 @@ else:
         def emit(self, record):
             pass
 
+log = logging.getLogger('zygote.master')
+
 class ZygoteMaster(object):
 
-    log = logging.getLogger('zygote.master')
     instantiated = False
 
     RECV_SIZE = 8096
 
-    WORKER_TRANSITION_INTERVAL = 1.0 # number of seconds to poll when
-                                     # transitioning workers
+    # number of seconds to wait between polls, when transitioning workers
+    WORKER_TRANSITION_INTERVAL = 1.0
 
     def __init__(self, sock, basepath, module, num_workers, control_port, max_requests=None, zygote_base=None):
         if self.__class__.instantiated:
-            self.log.error('cannot instantiate zygote master more than once')
+            log.error('cannot instantiate zygote master more than once')
             sys.exit(1)
         self.__class__.instantiated = True
 
@@ -66,6 +68,9 @@ class ZygoteMaster(object):
         zygote.handlers.get_httpserver(self.io_loop, control_port, self, zygote_base=zygote_base)
 
     def reap_child(self, signum, frame):
+        """Signal handler for SIGCHLD. Reaps children and updates
+        self.zygote_collection.
+        """
         assert signum == signal.SIGCHLD
         while True:
             try:
@@ -78,29 +83,28 @@ class ZygoteMaster(object):
                 break
 
             status_code = os.WEXITSTATUS(status)
-            self.log.info('zygote %d exited with status %d', pid, status_code)
+            log.info('zygote %d exited with status %d', pid, status_code)
             self.zygote_collection.remove_zygote(pid)
 
     def stop(self, signum=None, frame=None):
-
-        def safe_kill(pid):
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except OSError:
-                pass
-
+        """Stop the zygote master, by killing all workers and zygote processes,
+        and then exiting with status 0 from the master.
+        """
+        log.info('stopping all zygotes and workers')
         pids = set()
         for zygote in self.zygote_collection:
             for worker in zygote.workers():
                 safe_kill(worker.pid)
-            pids.add(zygote.pid)
-            safe_kill(zygote.pid)
+            if safe_kill(zygote.pid):
+                pids.add(zygote.pid)
 
+        log.info('waiting for workers to terminate')
         while pids:
             pid, status = os.wait()
             if pid in pids:
                 pids.remove(pid)
 
+        log.info('exiting')
         sys.exit(0)
 
     def recv_protol_msg(self, fd, events):
@@ -109,31 +113,34 @@ class ZygoteMaster(object):
         data = self.domain_socket.recv(self.RECV_SIZE)
         msg = message.Message.parse(data)
         msg_type = type(msg)
-        self.log.debug('received message of type %s from pid %d', msg_type.__name__, msg.pid)
+        log.debug('received message of type %s from pid %d', msg_type.__name__, msg.pid)
+
         if msg_type is message.MessageWorkerStart:
+            # a new worker was spawned by one of our zygotes; add it to
+            # zygote_collection, and note the time created and the zygote parent
             self.zygote_collection[msg.worker_ppid].add_worker(msg.pid, msg.time_created)
         elif msg_type is message.MessageWorkerExit:
+            # a worker exited. tell the current/active zygote to spawn a new
+            # child. if this was the last child of a different (non-current)
+            # zygote, kill that zygote
             zygote = self.zygote_collection[msg.pid]
             zygote.remove_worker(msg.child_pid)
 
-            if zygote == self.current_zygote:
-                # request a respawn
-                zygote.request_spawn()
-            else:
-                self.current_zygote.request_spawn()
-                if zygote.worker_count == 0:
-                    # if this zygote is not the current zygote, and it has no children
-                    # left, kill it
-                    os.kill(zygote.pid, signal.SIGTERM)
-
+            self.current_zygote.request_spawn()
+            if zygote != self.current_zygote and zygote.worker_count == 0:
+                # not the current zygote, and no children left; kill it
+                # left, kill it; shouldn't need to safe_kill here
+                os.kill(zygote.pid, signal.SIGTERM)
         elif msg_type is message.MessageHTTPBegin:
+            # a worker started servicing an HTTP request
             worker = self.zygote_collection.get_worker(msg.pid)
             worker.start_request(msg.remote_ip, msg.http_line)
         elif msg_type is message.MessageHTTPEnd:
+            # a worker finished servicing an HTTP request
             worker = self.zygote_collection.get_worker(msg.pid)
             worker.end_request()
             if self.max_requests is not None and worker.request_count >= self.max_requests:
-                self.log.info('child %d reached max_requests %d, killing it', worker.pid, self.max_requests)
+                log.info('child %d reached max_requests %d, killing it', worker.pid, self.max_requests)
                 os.kill(worker.pid, signal.SIGTERM)
 
     def transition_idle_workers(self):
@@ -147,7 +154,7 @@ class ZygoteMaster(object):
             for worker in z.idle_workers():
                 os.kill(worker.pid, signal.SIGTERM)
                 kill_count += 1
-        self.log.info('Attempted to transition %d workers from %d zygotes', kill_count, zygote_count)
+        log.info('Attempted to transition %d workers from %d zygotes', kill_count, zygote_count)
 
         if zygote_count:
             # The list of other_zygotes was at least one, so we should
@@ -159,10 +166,12 @@ class ZygoteMaster(object):
             self.io_loop.add_timeout(time.time() + self.WORKER_TRANSITION_INTERVAL, self.transition_idle_workers)
 
     def update_revision(self, signum=None, frame=None):
-        """The SIGHUP handler, calls create zygote and stuff"""
-        is_new, z = self.create_zygote(True)
+        """The SIGHUP handler, calls create_zygote and possibly initiates the
+        transition of idle workers.
+        """
+        is_new, _ = self.create_zygote(True)
         if not is_new:
-            self.log.warning('received SIGHUP for old the current code revision, ignoring')
+            log.warning('received SIGHUP for old the current code revision, ignoring')
         else:
             self.transition_idle_workers()
 
@@ -173,14 +182,14 @@ class ZygoteMaster(object):
         z = self.zygote_collection.basepath_to_zygote(realbase)
         if z is not None:
             # a zygote for this basepath already exists, reuse that
-            self.log.info('zygote for base %r already exists, reusing %d', realbase, z.pid)
+            log.info('zygote for base %r already exists, reusing %d', realbase, z.pid)
             return False, z
         else:
             # the basepath has changed, create a new zygote
             pid = os.fork()
             if pid:
-                self.log.info('started zygote %d pointed at base %r', pid, realbase)
-                z = self.zygote_collection.add_zygote(pid, realbase)
+                log.info('started zygote %d pointed at base %r', pid, realbase)
+                z = self.zygote_collection.add_zygote(pid, realbase, self.io_loop)
                 if make_current:
                     self.current_zygote = z
                 return True, z
@@ -190,23 +199,23 @@ class ZygoteMaster(object):
                 # isn't necessary, but it seems good to remove these resources
                 # if they're not needed in the child.
                 del self.io_loop
-                self.domain_socket.close()
+                close_fds(self.sock.fileno())
 
                 # create the zygote
                 z = ZygoteWorker(self.sock, realbase, self.module)
                 z.loop()
 
     def start(self):
-        _, z = self.create_zygote()
+        is_new, z = self.create_zygote()
+        assert is_new
         for x in xrange(self.num_workers):
             z.request_spawn()
         self.io_loop.start()
 
 def main(opts, module):
-    zygote.util.setproctitle('[zygote master %s]' % (module,))
+    setproctitle('[zygote master %s]' % (module,))
 
     # Initialize the logging module
-    log = logging.getLogger('zygote')
     formatter = logging.Formatter('[%(process)d] %(asctime)s :: %(levelname)-7s :: %(name)s - %(message)s')
 
     if os.isatty(sys.stderr.fileno()):

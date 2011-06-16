@@ -5,6 +5,7 @@ import signal
 import socket
 import time
 
+import zygote.util
 from zygote import message
 from zygote.util import meminfo_fmt
 
@@ -70,7 +71,7 @@ class Worker(object):
 
 class Zygote(object):
 
-    def __init__(self, pid, basepath):
+    def __init__(self, pid, basepath, io_loop):
         self.basepath = basepath
         self.pid = pid
         self.worker_map = {}
@@ -78,21 +79,16 @@ class Zygote(object):
         self.vsz = ''
         self.rss = ''
         self.shr = ''
+        self.connected = False
+        self.send_queue = []
+        self.write_queue_active = False
 
         # wait until the control_socket can be connected, since it might take a
         # moment before the forked child creates their socket. a better way to
         # do this would be to have the parent create the control_socket and then
         # the child inherits it through forking
-        self.control_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
-        while True:
-            try:
-                self.control_socket.connect('\0zygote_%d' % self.pid)
-                break
-            except socket.error, e:
-                if e.errno == errno.ECONNREFUSED:
-                    continue
-                else:
-                    raise
+        self.control_socket = zygote.util.AFUnixSender(io_loop)
+        self.control_socket.connect('\0zygote_%d' % self.pid)
 
     def update_meminfo(self):
         for k, v in meminfo_fmt(self.pid).iteritems():
@@ -146,8 +142,8 @@ class ZygoteCollection(object):
     def __init__(self):
         self.zygote_map = {}
 
-    def add_zygote(self, pid, basepath):
-        z = Zygote(pid, basepath)
+    def add_zygote(self, pid, basepath, io_loop):
+        z = Zygote(pid, basepath, io_loop)
         self.zygote_map[pid] = z
         return z
 
