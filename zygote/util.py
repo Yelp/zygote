@@ -77,6 +77,7 @@ def close_fds(*exclude):
     file descriptors (say, the first 16k), but it doesn't seem like it's really
     worth the trouble (and doing this is potentially slow).
     """
+    return # XXX: fixme
     if not os.path.exists('/proc/self/fd'):
         log.warn('no /proc fd information running, not closing fds')
         return
