@@ -39,6 +39,7 @@ def get_meminfo(pid=None):
       lrs -- kilobytes from library pages
       dt -- kilobytes from diry pages
     """
+    raw_file = None
     try:
         raw_file = open('/proc/%d/statm' if pid else '/proc/self/statm')
         data = raw_file.read().rstrip('\n')
