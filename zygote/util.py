@@ -1,3 +1,5 @@
+from __future__ import with_statement
+
 import errno
 import logging
 import os
@@ -39,14 +41,11 @@ def get_meminfo(pid=None):
       lrs -- kilobytes from library pages
       dt -- kilobytes from diry pages
     """
-    raw_file = None
     try:
-        raw_file = open('/proc/%d/statm' if pid else '/proc/self/statm')
-        data = raw_file.read().rstrip('\n')
+        with open('/proc/%d/statm' % (pid or os.getpid())) as raw_file:
+            data = raw_file.read().rstrip('\n')
     except IOError:
         return dict()
-    finally:
-        raw_file.close()
 
     fields = ['virt', 'res', 'shr', 'trs', 'drs', 'lrs', 'dt']
     pagesize = resource.getpagesize()
