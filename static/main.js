@@ -42,7 +42,6 @@ var mungeTimes = function (obj) {
 }
 
 $(document).ready(function () {
-	var logged = false;
 	var template = null;
 	var vars = null;
 
@@ -55,10 +54,6 @@ $(document).ready(function () {
 	var updateVars = function () {
 		$.get('/json', function (data) {
 			lastRefreshed = new Date();
-			if (!logged) {
-				console.info(data);
-				logged = true;
-			}
 			vars = mungeTimes(data);
 			if (template) {
 				render();
