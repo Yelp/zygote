@@ -87,7 +87,6 @@ def close_fds(*exclude):
         if fd not in excl:
             try:
                 retry_eintr(lambda: os.close(fd))
-                print 'closed %d' % (fd,)
             except OSError, e:
                 if e.errno == errno.EBADF:
                     # for some reason the fd was bad. nothing we can do about
@@ -100,7 +99,8 @@ def safe_kill(pid):
     try:
         log.debug('killing %d', pid)
         os.kill(pid, signal.SIGTERM)
-    except OSError:
+    except OSError, e:
+        log.debug('failed to safe_kill pid %d because of %r' % (pid, e))
         return False
     return True
 
@@ -159,6 +159,7 @@ class AFUnixSender(object):
                 self.io_loop.remove_handler(fd)
 
         self.io_loop.add_handler(self.socket.fileno(), sender, self.io_loop.WRITE)
+        self.sending = True
 
     def send(self, msg):
         self.send_queue.append(msg)

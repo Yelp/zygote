@@ -1,3 +1,4 @@
+import atexit
 import errno
 import logging
 import os
@@ -15,6 +16,9 @@ from .message import Message, MessageCreateWorker, MessageWorkerStart, MessageWo
 
 
 def establish_signal_handlers(logger):
+    # delete atexit handlers from parent
+    del atexit._exithandlers[:]
+
     def zygote_exit(signum, frame):
         if signum == signal.SIGINT:
             logger.info('received SIGINT, exiting')
@@ -104,7 +108,6 @@ class ZygoteWorker(object):
         time_created = time.time()
         pid = os.fork()
         if not pid:
-
             log = logging.getLogger('zygote.worker.worker_process')
             establish_signal_handlers(log)
             def on_line(line):

@@ -1,3 +1,4 @@
+import atexit
 import datetime
 import errno
 import fcntl
@@ -42,6 +43,7 @@ class ZygoteMaster(object):
             log.error('cannot instantiate zygote master more than once')
             sys.exit(1)
         self.__class__.instantiated = True
+        self.stopped = False
 
         self.io_loop = tornado.ioloop.IOLoop()
         self.sock = sock
@@ -90,6 +92,8 @@ class ZygoteMaster(object):
         """Stop the zygote master, by killing all workers and zygote processes,
         and then exiting with status 0 from the master.
         """
+        if self.stopped:
+            return
         log.info('stopping all zygotes and workers')
         pids = set()
         for zygote in self.zygote_collection:
@@ -98,13 +102,15 @@ class ZygoteMaster(object):
             if safe_kill(zygote.pid):
                 pids.add(zygote.pid)
 
-        log.info('waiting for workers to terminate')
+        log.info('waiting for workers %r to terminate' % (sorted(pids),))
         while pids:
             pid, status = os.wait()
             if pid in pids:
                 pids.remove(pid)
 
         log.info('exiting')
+        self.stopped = True
+        self.__class__.instantiated = False
         sys.exit(0)
 
     def recv_protol_msg(self, fd, events):
@@ -246,4 +252,5 @@ def main(opts, module):
     sock.listen(128)
 
     master = ZygoteMaster(sock, opts.basepath, module, opts.num_workers, opts.control_port, opts.max_requests, opts.zygote_base)
+    atexit.register(master.stop)
     master.start()
