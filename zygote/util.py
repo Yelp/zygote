@@ -133,7 +133,7 @@ class AFUnixSender(object):
                 raise
         else:
             self.connected = True
-            self._sendall()
+            self._finish_connecting()
 
     def _finish_connecting(self):
         error = self.socket.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)

@@ -166,3 +166,21 @@ a worker has processed, and whether that means the worker should be killed (and
 respawned). And so on. The implicit goal of this is that all complicated process
 management logic should exist in the zygote master; there should be very little
 logic in the zygotes, or in the worker children.
+
+Testing
+-------
+
+There are unit tests, which exist in the `tests` directory. You should be able
+to run them by invoking `make test`, e.g.
+
+    evan@zeno ~/code/zygote (master) $ make test
+    tests.test ZygoteTests.test_http_get ... ok in 2.53s
+    
+    PASSED.  1 test / 1 case: 1 passed (0 unexpected), 0 failed (0 expected).  (Total test time 2.53s)
+
+Some caveats. You need a very recent version of `tornado` to run the tests. This
+is to force Tornado to use the "simple" http client. Hopefully the API will be
+stable going forward from Tornado 0.2.0ñ.
+
+You will also need [testify](http://pypi.python.org/pypi/testify/) to run the
+tests. Any version of Testify should work.

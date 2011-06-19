@@ -1,8 +1,6 @@
 import datetime
-import errno
 import os
 import signal
-import socket
 import time
 
 import zygote.util

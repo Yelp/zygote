@@ -30,6 +30,10 @@ def establish_signal_handlers(logger):
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, zygote_exit)
 
+def notify(sock, msg_cls, body=''):
+    """Send a message to the zygote master"""
+    sock.send(msg_cls.emit(str(body)))
+
 class ZygoteWorker(object):
     """A Zygote is a process that manages children worker processes.
 
@@ -46,6 +50,7 @@ class ZygoteWorker(object):
 
     def __init__(self, sock, basepath, module):
         self.version = basepath.split('/')[-1]
+        self.ppid = os.getppid()
         setproctitle('[zygote version=%s]' % (self.version,))
 
         self.io_loop = tornado.ioloop.IOLoop()
@@ -66,7 +71,7 @@ class ZygoteWorker(object):
         self.io_loop.add_handler(self.control_socket.fileno(), self.handle_control, self.io_loop.READ)
 
         self.notify_socket = AFUnixSender(self.io_loop)
-        self.notify_socket.connect('\0zygote_%d' % os.getppid())
+        self.notify_socket.connect('\0zygote_%d' % self.ppid)
 
         signal.signal(signal.SIGCHLD, self.reap_child)
 
@@ -95,31 +100,32 @@ class ZygoteWorker(object):
 
             status_code = os.WEXITSTATUS(status)
             self.log.info('reaped worker %d, status %d', pid, status_code)
-            self.notify(MessageWorkerExit, '%d %d' % (pid, status_code))
+            notify(self.notify_socket, MessageWorkerExit, '%d %d' % (pid, status_code))
 
     def loop(self):
         self.io_loop.start()
 
-    def notify(self, msg_cls, body=''):
-        """Send a message to the zygote master"""
-        self.notify_socket.send(msg_cls.emit(str(body)))
 
     def spawn_worker(self):
         time_created = time.time()
         pid = os.fork()
         if not pid:
+            del self.io_loop
+            io_loop = tornado.ioloop.IOLoop()
+            sock = AFUnixSender(io_loop)
+            sock.connect('\0zygote_%d' % self.ppid)
+
             log = logging.getLogger('zygote.worker.worker_process')
             establish_signal_handlers(log)
             def on_line(line):
                 log.debug('sending MessageHTTPBegin')
-                self.notify(MessageHTTPBegin, line)
+                notify(sock, MessageHTTPBegin, line)
             def on_close():
                 log.debug('sending MessageHTTPEnd')
-                self.notify(MessageHTTPEnd)
+                notify(sock, MessageHTTPEnd)
 
-            self.notify(MessageWorkerStart, '%d %d' % (int(time_created * 1e6), os.getppid()))
+            notify(sock, MessageWorkerStart, '%d %d' % (int(time_created * 1e6), os.getppid()))
             setproctitle('zygote-worker version=%s' % self.version)
-            io_loop = tornado.ioloop.IOLoop()
             app = self.get_application()
             #http_server = tornado.httpserver.HTTPServer(app, io_loop=io_loop, no_keep_alive=True)
             # TODO: make keep-alive servers work
