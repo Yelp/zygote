@@ -1,4 +1,5 @@
-.PHONY: pyflakes clean test
+.PHONY: pyflakes clean test production
+
 pyflakes:
 	find . -name '*.py' -print0 | xargs -0 pyflakes
 
@@ -8,3 +9,8 @@ clean:
 
 test:
 	@testify -v tests.test
+
+serviceinit.d:
+	mkdir serviceinit.d
+
+production: serviceinit.d
