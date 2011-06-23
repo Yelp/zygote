@@ -37,6 +37,11 @@ provided by Tornado, but this is complementary to a real, full-fledged HTTP
 server like Apache or Nginx -- Zygote's expertise is just in managing Python web
 processes. It's OK to run Apache or Nginx in front of Zygote.
 
+Zygote is licensed under the
+[Apache Licence, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0.html). You
+should find a copy of this license along with the Zygote source, in the
+`LICENSE` file.
+
 How It Works
 ------------
 
