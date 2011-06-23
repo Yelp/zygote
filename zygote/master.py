@@ -35,8 +35,8 @@ class ZygoteMaster(object):
 
     RECV_SIZE = 8096
 
-    # number of seconds to wait between polls, when transitioning workers
-    WORKER_TRANSITION_INTERVAL = 1.0
+    # number of seconds to wait between polls
+    POLL_INTERVAL = 1.0
 
     def __init__(self, sock, basepath, module, num_workers, control_port, max_requests=None, zygote_base=None):
         if self.__class__.instantiated:
@@ -55,6 +55,7 @@ class ZygoteMaster(object):
 
         self.current_zygote = None
         self.zygote_collection = accounting.ZygoteCollection()
+        self.abandoned_workers = set()
 
         # create an abstract unix domain socket. this socket will be used to
         # receive messages from zygotes and their children
@@ -86,7 +87,61 @@ class ZygoteMaster(object):
 
             status_code = os.WEXITSTATUS(status)
             log.info('zygote %d exited with status %d', pid, status_code)
-            self.zygote_collection.remove_zygote(pid)
+
+            # the zygote died. a few things to do here.
+            #
+            # 1) if the zygote was the current zygote, we need to start a new
+            #    zygote; if it wasn't the current zygote, but it had children,
+            #    we may need to transfer the children over to the current zygote
+            #    (i.e. instruct the current zygote to spawn more children)
+            #
+            # 2) if the zygote had children that were unterminated, we need to
+            #    kill them. this is a bit complicated because we're not the
+            #    parent, so we need to poll them to find out when they die
+
+            # these are workers that may need to be cleaned up
+            self.abandoned_workers |= set(self.zygote_collection.worker_pids_from_zygote_pid(pid))
+
+            try:
+                self.zygote_collection.remove_zygote(pid)
+            except KeyError:
+                pass
+
+            if pid == self.current_zygote.pid:
+                self.current_zygote = self.create_zygote()
+
+            if self.abandoned_workers:
+                self.kill_abandoned_workers()
+
+    def kill_abandoned_workers(self):
+        """This method handles killing dead zygotes' children."""
+
+        assert self.abandoned_workers
+        finished = []
+        for worker_pid in self.abandoned_workers:
+            try:
+                os.kill(worker_pid, signal.SIGTERM)
+            except OSError, e:
+                if e.errno == errno.ESRCH:
+                    # pid no longer exists
+                    finished.append(worker_pid)
+                elif e.errno == errno.EPERM:
+                    # some other process is using this pid now
+                    finished.append(worker_pid)
+                else:
+                    raise
+
+        for _ in finished:
+            self.current_zygote.request_spawn()
+
+        # remove any workers that killing resulted in ESRCH for; this means that
+        # the worker really did exit
+        self.abandoned_workers -= set(finished)
+
+        # if there are still abandoned workers, reschedule
+        # kill_abandoned_workers to happen again in the future
+        if self.abandoned_workers:
+            self.io_loop.add_timeout(time.time() + self.POLL_INTERVAL, self.kill_abandoned_workers)
 
     def stop(self, signum=None, frame=None):
         """Stop the zygote master, by killing all workers and zygote processes,
@@ -169,51 +224,40 @@ class ZygoteMaster(object):
             # notice this fact when it receives the final MessageWorkerExit, and
             # at that time it will kill the worker, which is how this timeout
             # loop gets ended.
-            self.io_loop.add_timeout(time.time() + self.WORKER_TRANSITION_INTERVAL, self.transition_idle_workers)
+            self.io_loop.add_timeout(time.time() + self.POLL_INTERVAL, self.transition_idle_workers)
 
     def update_revision(self, signum=None, frame=None):
         """The SIGHUP handler, calls create_zygote and possibly initiates the
         transition of idle workers.
         """
-        is_new, _ = self.create_zygote(True)
-        if not is_new:
-            log.warning('received SIGHUP for old the current code revision, ignoring')
-        else:
-            self.transition_idle_workers()
+        self.create_zygote()
+        self.transition_idle_workers()
 
-    def create_zygote(self, make_current=True):
+    def create_zygote(self):
         """"Create a new zygote"""
         # read the basepath symlink
         realbase = os.path.realpath(self.basepath)
-        z = self.zygote_collection.basepath_to_zygote(realbase)
-        if z is not None:
-            # a zygote for this basepath already exists, reuse that
-            log.info('zygote for base %r already exists, reusing %d', realbase, z.pid)
-            return False, z
-        else:
-            # the basepath has changed, create a new zygote
-            pid = os.fork()
-            if pid:
-                log.info('started zygote %d pointed at base %r', pid, realbase)
-                z = self.zygote_collection.add_zygote(pid, realbase, self.io_loop)
-                if make_current:
-                    self.current_zygote = z
-                return True, z
-            else:
-                # Try to clean up some of the file descriptors and whatnot that
-                # exist in the parent before continuing. Strictly speaking, this
-                # isn't necessary, but it seems good to remove these resources
-                # if they're not needed in the child.
-                del self.io_loop
-                close_fds(self.sock.fileno())
 
-                # create the zygote
-                z = ZygoteWorker(self.sock, realbase, self.module)
-                z.loop()
+        pid = os.fork()
+        if pid:
+            log.info('started zygote %d pointed at base %r', pid, realbase)
+            z = self.zygote_collection.add_zygote(pid, realbase, self.io_loop)
+            self.current_zygote = z
+            return z
+        else:
+            # Try to clean up some of the file descriptors and whatnot that
+            # exist in the parent before continuing. Strictly speaking, this
+            # isn't necessary, but it seems good to remove these resources
+            # if they're not needed in the child.
+            del self.io_loop
+            close_fds(self.sock.fileno())
+
+            # create the zygote
+            z = ZygoteWorker(self.sock, realbase, self.module)
+            z.loop()
 
     def start(self):
-        is_new, z = self.create_zygote()
-        assert is_new
+        z = self.create_zygote()
         for x in xrange(self.num_workers):
             z.request_spawn()
         self.io_loop.start()

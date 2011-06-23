@@ -179,3 +179,7 @@ class ZygoteCollection(object):
 
     def pids(self):
         return self.zygote_map.keys()
+
+    def worker_pids_from_zygote_pid(self, zygote_pid):
+        zygote = self.zygote_map[zygote_pid]
+        return [worker.pid for worker in zygote.workers()]
