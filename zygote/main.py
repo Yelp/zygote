@@ -21,11 +21,12 @@ import sys
 import zygote.master
 import zygote.util
 
-if __name__ == '__main__':
+def main():
     parser = optparse.OptionParser()
     parser.add_option('-b', '--basepath', default=os.environ.get('BASEPATH', ''), help='The basepath to use')
     parser.add_option('--control-port', type='int', default=5100, help='The control port to listen on')
     parser.add_option('-d', '--debug', default=False, action='store_true', help='Enable debugging')
+    parser.add_option('-m', '--module', default=None, help='The name of the module holding get_application()')
     parser.add_option('-p', '--port', type='int', default=0, help='The port to bind on')
     parser.add_option('-i', '--interface', default='', help='The interface to bind on')
     parser.add_option('--num-workers', type='int', default=8, help='How many workers to run')
@@ -39,8 +40,11 @@ if __name__ == '__main__':
     if not opts.port:
         parser.error('No port was specified')
         sys.exit(1)
-    if not len(args) == 1:
-        parser.error('Must specify exactly one argument, the module to load')
+    if not opts.module:
+        parser.error('You must specify a module argument using -m')
+        sys.exit(1)
 
-    module = args.pop()
-    zygote.master.main(opts, module)
+    zygote.master.main(opts, args)
+
+if __name__ == '__main__':
+    main()

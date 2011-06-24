@@ -48,7 +48,8 @@ class ZygoteWorker(object):
 
     RECV_SIZE = 8096
 
-    def __init__(self, sock, basepath, module):
+    def __init__(self, sock, basepath, module, args):
+        self.args = args
         self.version = basepath.split('/')[-1]
         self.ppid = os.getppid()
         setproctitle('[zygote version=%s]' % (self.version,))
@@ -126,7 +127,7 @@ class ZygoteWorker(object):
 
             notify(sock, MessageWorkerStart, '%d %d' % (int(time_created * 1e6), os.getppid()))
             setproctitle('zygote-worker version=%s' % self.version)
-            app = self.get_application()
+            app = self.get_application(*self.args)
             #http_server = tornado.httpserver.HTTPServer(app, io_loop=io_loop, no_keep_alive=True)
             # TODO: make keep-alive servers work
             http_server = HTTPServer(app, io_loop=io_loop, no_keep_alive=True, close_callback=on_close, headers_callback=on_line)

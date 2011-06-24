@@ -38,13 +38,14 @@ class ZygoteMaster(object):
     # number of seconds to wait between polls
     POLL_INTERVAL = 1.0
 
-    def __init__(self, sock, basepath, module, num_workers, control_port, max_requests=None, zygote_base=None):
+    def __init__(self, sock, basepath, module, num_workers, control_port, application_args=[], max_requests=None, zygote_base=None):
         if self.__class__.instantiated:
             log.error('cannot instantiate zygote master more than once')
             sys.exit(1)
         self.__class__.instantiated = True
         self.stopped = False
 
+        self.application_args = application_args
         self.io_loop = tornado.ioloop.IOLoop()
         self.sock = sock
         self.basepath = basepath
@@ -253,7 +254,7 @@ class ZygoteMaster(object):
             close_fds(self.sock.fileno())
 
             # create the zygote
-            z = ZygoteWorker(self.sock, realbase, self.module)
+            z = ZygoteWorker(self.sock, realbase, self.module, self.application_args)
             z.loop()
 
     def start(self):
@@ -262,8 +263,8 @@ class ZygoteMaster(object):
             z.request_spawn()
         self.io_loop.start()
 
-def main(opts, module):
-    setproctitle('[zygote master %s]' % (module,))
+def main(opts, extra_args):
+    setproctitle('[zygote master %s]' % (opts.module,))
 
     # Initialize the logging module
     formatter = logging.Formatter('[%(process)d] %(asctime)s :: %(levelname)-7s :: %(name)s - %(message)s')
@@ -294,7 +295,6 @@ def main(opts, module):
     sock.setblocking(0)
     sock.bind((opts.interface, opts.port))
     sock.listen(128)
-
-    master = ZygoteMaster(sock, opts.basepath, module, opts.num_workers, opts.control_port, opts.max_requests, opts.zygote_base)
+    master = ZygoteMaster(sock, opts.basepath, opts.module, opts.num_workers, opts.control_port, extra_args, opts.max_requests, opts.zygote_base)
     atexit.register(master.stop)
     master.start()
