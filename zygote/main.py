@@ -22,7 +22,8 @@ import zygote.master
 import zygote.util
 
 def main():
-    parser = optparse.OptionParser()
+    usage = 'usage: %prog -b <basepath> -m <module> -p <port> [module_args...]'
+    parser = optparse.OptionParser(usage=usage)
     parser.add_option('-b', '--basepath', default=os.environ.get('BASEPATH', ''), help='The basepath to use')
     parser.add_option('--control-port', type='int', default=5100, help='The control port to listen on')
     parser.add_option('-d', '--debug', default=False, action='store_true', help='Enable debugging')
