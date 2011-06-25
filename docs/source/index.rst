@@ -106,15 +106,15 @@ using ``tornado.wsgi.WSGIContainer``.
 
 After that, an invocation of Zygote would be done like this::
 
-    python -m zygote.main -p 8000 -b ./example example
+    python -m zygote.main -p 8000 -b ./example -m example
 
 Let's break that down. The ``python -m zygote.main`` part instructs Python to
 run Zygote's `main` module. The parts after that are options and arguments. The
 ``-p 8000`` option instructs Zygote that your application will be served from
 port 8000. The ``-b ./example`` option states that the symlink for your
 application exists at ``./example``. This does not strictly need to be a symlink,
-but the code versioning will only work if it is a symlink. The final argument is
-just ``example`` and that states that the module name for the application is
+but the code versioning will only work if it is a symlink. The final option is
+``-m example`` and that states that the module name for the application is
 ``example``.
 
 The example invocation given above will work if you run it from a clone of the
