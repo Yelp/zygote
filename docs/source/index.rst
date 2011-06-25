@@ -67,11 +67,11 @@ different, flatter process tree, but the diagram shows how it works in Zygote).
 
 When the master zygote process wants to spawn a copy of `B`, it forks, and the
 forked process, the `B` zygote, can then fork again to create workers. Because
-the workers are created using the `fork(2)` system call, the zygotes can import
-Python modules once and the workers spawned will automatically have all of the
-code available to them, initialized and in memory. Not only is this faster, it
-also saves a lot of memory compared to reimporting the code multiple times, and
-having identical pages in memory that are unshared.
+the workers are created using the ``fork(2)`` system call, the zygotes can
+import Python modules once and the workers spawned will automatically have all
+of the code available to them, initialized and in memory. Not only is this
+faster, it also saves a lot of memory compared to reimporting the code multiple
+times, and having identical pages in memory that are unshared.
 
 Transitioning code from `A` to `B` as described in the previous section consists
 of the master killing idle workers and instructing the appropriate zygote to
@@ -126,10 +126,12 @@ that makes ``example.py`` importable by doing ``import example``.
 Caveats
 -------
 
-Currently Zygote only works with `Tornado <http://www.tornadoweb.org/>`_
-applications. It should be fairly straightforward to get it working with other
-WSGI webservers, however. It just requires someone whose willing to roll their
-sleeves up and hack on the code a bit.
+Zygote is essentially a wrapper around Tornado's HTTP server, and therefore only
+works with Tornado applications. This means your application must be a valid
+Tornado application to use Zygote. Note, however, that this does *not* preclude
+you can from using WSGI applications with Zygote. On the contrary, you can use
+Tornado's ``tornado.wsgi.WSGIContainer`` class to wrap a WSGI application for
+use with Zygote.
 
 Your application must be fork-safe to use Zygote. That means that it's best if
 creating non-forksafe resources such as database connections is not done as a
@@ -138,8 +140,14 @@ code. If you *do* have non-forksafe resources in your code, you need to write
 code that reinitializes those resources when the application is instantiated (or
 by detecting when the current PID changes).
 
-Zygote supports IPv4 only. Support for IPv6 should be easy to add, if there's a
-need.
+Zygote supports IPv4 only. Support for IPv6 should be easy to add (Tornado
+already supports it), if there's a need.
+
+The Zygote project is developed by `Yelp <http://opensource.yelp.com/>`_, but
+Zygote is not currently considered stable enough to run as the frontend for the
+main site (i.e. http://www.yelp.com/ is not running on Zygote). At Yelp we are
+using Zygote for other internal services. When the main site runs off of Zygote,
+you're sure to hear about it in a blog post or other announcement.
 
 Testing
 -------

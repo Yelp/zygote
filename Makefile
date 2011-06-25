@@ -1,7 +1,9 @@
-.PHONY: pyflakes clean test production docs
+.PHONY: default pyflakes clean test production docs
+
+default: docs
 
 pyflakes:
-	find . -name '*.py' -print0 | xargs -0 pyflakes
+	find zygote tests -name '*.py' -print0 | xargs -0 pyflakes
 
 clean:
 	find . -name '*.py[co]' -delete
