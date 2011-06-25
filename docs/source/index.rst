@@ -87,10 +87,21 @@ what version of the code everything is running.
 How to Use It
 -------------
 
-To use Zygote, you need to write a module that implements a `get_application`
-method. That method takes no arguments, and returns an object that can be used
-by a `Tornado <http://www.tornadoweb.org/>`_ HTTPServer object (typically this
-would be an instance of `tornado.web.Application`).
+To use Zygote, you need to write a module that implements a `get_application()`
+method. That method can take any number of string arguments, and must return an
+object that can be used by a `Tornado <http://www.tornadoweb.org/>`_
+``HTTPServer`` object (typically this would be an instance of
+``tornado.web.Application``). Any extra arguments passed to ``zygote`` on the
+command line will be fed in as positional arguments to `get_application()`, so
+you can pass in extra data (e.g. the path to a config file) using this
+mechanism; however, it is strongly encouraged that any arguments to
+`get_application()` be made optional arguments, since the ``zygote`` command
+line tool doesn't have any knowledge of the expected arguments and cannot
+display useful help or error messages to users.
+
+Your application can be a "pure" Tornado web application, or a WSGI
+application. If you're using WSGI, make sure you first wrap the application
+using ``tornado.wsgi.WSGIContainer``.
 
 After that, an invocation of Zygote would be done like this::
 
