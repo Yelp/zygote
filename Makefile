@@ -1,4 +1,4 @@
-.PHONY: pyflakes clean test production
+.PHONY: pyflakes clean test production docs
 
 pyflakes:
 	find . -name '*.py' -print0 | xargs -0 pyflakes
@@ -14,3 +14,6 @@ serviceinit.d:
 	mkdir serviceinit.d
 
 production: serviceinit.d
+
+docs:
+	make -C docs html
