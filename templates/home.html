@@ -2,10 +2,10 @@
 <html>
   <head>
 	<title>zygote</title>
-	<link rel="stylesheet" type="text/css" href="http://yui.yahooapis.com/3.3.0/build/cssreset/reset-min.css">
+	<link rel="stylesheet" type="text/css" href="{{static_url('reset-min.css')}}">
 	<link rel="stylesheet" type="text/css" href="{{static_url('base.css')}}" />
 	<script type="text/javascript" src="{{static_url('mustache.js')}}"></script>
-	<script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/1.6.1/jquery.min.js"></script>
+	<script type="text/javascript" src="//ajax.googleapis.com/ajax/libs/jquery/1.6.1/jquery.min.js"></script>
 	<script type="text/javascript" src="{{static_url('main.js')}}"></script>
   </head>
   <body>
@@ -13,8 +13,6 @@
 	<div id="content">loading...</div>
 	<div class="vgap">
 	  Note: you can access all of the data on this page programatically at <a href="/json">/json</a>
-	  <br>
-	  <a href="#" id="refresh_page">Refresh page.</a> (last updated at <span id="refresh_widget"></span>)
 	</div>
   </body>
 </html>
