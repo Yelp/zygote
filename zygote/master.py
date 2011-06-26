@@ -95,40 +95,38 @@ class ZygoteMaster(object):
             except KeyError:
                 pass
 
-            if pid == self.current_zygote.pid:
-                self.current_zygote = self.create_zygote()
+            if not self.stopped:
+                if pid == self.current_zygote.pid:
+                    self.current_zygote = self.create_zygote()
 
-            # we may need to create new workers for the current zygote... this
-            # is a bit racy, although that seems to be pretty unlikely in
-            # practice
-            workers_needed = self.num_workers - self.zygote_collection.worker_count()
-            for x in xrange(workers_needed):
-                self.current_zygote.request_spawn()
+                # we may need to create new workers for the current zygote... this
+                # is a bit racy, although that seems to be pretty unlikely in
+                # practice
+                workers_needed = self.num_workers - self.zygote_collection.worker_count()
+                for x in xrange(workers_needed):
+                    self.current_zygote.request_spawn()
+
+            elif len(self.zygote_collection.zygote_map.values()) == 0:
+                self.really_stop()
 
     def stop(self, signum=None, frame=None):
         """Stop the zygote master, by killing all workers and zygote processes,
         and then exiting with status 0 from the master.
         """
-        if self.stopped:
-            return
+
+        # kill all of the workers
         log.info('stopping all zygotes and workers')
         pids = set()
         for zygote in self.zygote_collection:
             for worker in zygote.workers():
                 safe_kill(worker.pid)
-            if safe_kill(zygote.pid):
-                pids.add(zygote.pid)
 
-        log.info('waiting for workers %r to terminate' % (sorted(pids),))
-        while pids:
-            pid, status = os.wait()
-            if pid in pids:
-                pids.remove(pid)
-
-        log.info('exiting')
+        # now we have to wait until all of the workers actually exit... at that
+        # point self.really_stop() will be called
         self.stopped = True
-        self.__class__.instantiated = False
-        sys.exit(0)
+
+    def really_stop(self, status=0):
+        sys.exit(status)
 
     def recv_protol_msg(self, fd, events):
         """Callback for messages received on the domain_socket"""
@@ -149,11 +147,17 @@ class ZygoteMaster(object):
             zygote = self.zygote_collection[msg.pid]
             zygote.remove_worker(msg.child_pid)
 
-            self.current_zygote.request_spawn()
-            if zygote != self.current_zygote and zygote.worker_count == 0:
-                # not the current zygote, and no children left; kill it
-                # left, kill it; shouldn't need to safe_kill here
-                os.kill(zygote.pid, signal.SIGTERM)
+            if self.stopped:
+                # if we're in stopping mode, don't kill the zygote until all of
+                # its children have exited
+                if zygote.worker_count == 0:
+                    os.kill(zygote.pid, signal.SIGTERM)
+            else:
+                self.current_zygote.request_spawn()
+                if zygote != self.current_zygote and zygote.worker_count == 0:
+                    # not the current zygote, and no children left; kill it
+                    # left, kill it; shouldn't need to safe_kill here
+                    os.kill(zygote.pid, signal.SIGTERM)
         elif msg_type is message.MessageHTTPBegin:
             # a worker started servicing an HTTP request
             worker = self.zygote_collection.get_worker(msg.pid)

@@ -72,7 +72,7 @@ class ZygoteTest(TestCase):
                                           '-p', str(self.port),
                                           '--control-port', str(self.control_port),
                                           '--num-workers', str(self.num_workers),
-                                          'example'],
+                                          '-m', 'example'],
                                          env=env,
                                          stdout=devnull,
                                          stderr=devnull)
