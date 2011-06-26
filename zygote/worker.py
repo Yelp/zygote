@@ -54,6 +54,16 @@ class ZygoteWorker(object):
         self.ppid = os.getppid()
         setproctitle('[zygote version=%s]' % (self.version,))
 
+        # Create a pipe(2) pair. This will be used so workers can detect when
+        # the intermediate zygote exits -- when this happens, a read event will
+        # happen on the read_pipe file descriptor, and the child can exit. We do
+        # this so that if the intermediate zygote exits unexpectedly for some
+        # reason, while it still has children workers running (which is an
+        # abnormal situation in and of itself), we aren't left with orphaned
+        # worker processes. Note that the write_pipe is normally never written
+        # on, we're just using this hack to get a read event on the read pipe.
+        self.read_pipe, self.write_pipe = os.pipe()
+
         self.io_loop = tornado.ioloop.IOLoop()
 
         os.chdir(basepath)
@@ -106,17 +116,33 @@ class ZygoteWorker(object):
     def loop(self):
         self.io_loop.start()
 
-
     def spawn_worker(self):
         time_created = time.time()
         pid = os.fork()
         if not pid:
+            # We're the child. We need to close the write_pipe in order for the
+            # read_pipe to get an event when the parent's write_pipe closes
+            # (otherwise the kernel is too smart and thinks that it's waiting
+            # for writes from *this* process' write_pipe).
+            os.close(self.write_pipe)
+
+            log = logging.getLogger('zygote.worker.worker_process')
+            log.debug('new worker started')
+
+            def on_parent_exit(fd, events):
+                log.error('detected that intermediate zygote died, exiting')
+                sys.exit(0)
+
+            # create a new i/o loop
             del self.io_loop
             io_loop = tornado.ioloop.IOLoop()
+
+            # add the read pipe
+            io_loop.add_handler(self.read_pipe, on_parent_exit, io_loop.READ)
+
             sock = AFUnixSender(io_loop)
             sock.connect('\0zygote_%d' % self.ppid)
 
-            log = logging.getLogger('zygote.worker.worker_process')
             establish_signal_handlers(log)
             def on_line(line):
                 log.debug('sending MessageHTTPBegin')

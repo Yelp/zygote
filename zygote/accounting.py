@@ -180,6 +180,6 @@ class ZygoteCollection(object):
     def pids(self):
         return self.zygote_map.keys()
 
-    def worker_pids_from_zygote_pid(self, zygote_pid):
-        zygote = self.zygote_map[zygote_pid]
-        return [worker.pid for worker in zygote.workers()]
+    def worker_count(self):
+        """Return the total number of workers"""
+        return sum(len(z.workers()) for z in self.zygote_map.itervalues())

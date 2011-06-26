@@ -56,7 +56,6 @@ class ZygoteMaster(object):
 
         self.current_zygote = None
         self.zygote_collection = accounting.ZygoteCollection()
-        self.abandoned_workers = set()
 
         # create an abstract unix domain socket. this socket will be used to
         # receive messages from zygotes and their children
@@ -89,20 +88,8 @@ class ZygoteMaster(object):
             status_code = os.WEXITSTATUS(status)
             log.info('zygote %d exited with status %d', pid, status_code)
 
-            # the zygote died. a few things to do here.
-            #
-            # 1) if the zygote was the current zygote, we need to start a new
-            #    zygote; if it wasn't the current zygote, but it had children,
-            #    we may need to transfer the children over to the current zygote
-            #    (i.e. instruct the current zygote to spawn more children)
-            #
-            # 2) if the zygote had children that were unterminated, we need to
-            #    kill them. this is a bit complicated because we're not the
-            #    parent, so we need to poll them to find out when they die
-
-            # these are workers that may need to be cleaned up
-            self.abandoned_workers |= set(self.zygote_collection.worker_pids_from_zygote_pid(pid))
-
+            # the zygote died. if the zygote was not the current zygote it's OK;
+            # otherwise, we need to start a new one
             try:
                 self.zygote_collection.remove_zygote(pid)
             except KeyError:
@@ -111,38 +98,12 @@ class ZygoteMaster(object):
             if pid == self.current_zygote.pid:
                 self.current_zygote = self.create_zygote()
 
-            if self.abandoned_workers:
-                self.kill_abandoned_workers()
-
-    def kill_abandoned_workers(self):
-        """This method handles killing dead zygotes' children."""
-
-        assert self.abandoned_workers
-        finished = []
-        for worker_pid in self.abandoned_workers:
-            try:
-                os.kill(worker_pid, signal.SIGTERM)
-            except OSError, e:
-                if e.errno == errno.ESRCH:
-                    # pid no longer exists
-                    finished.append(worker_pid)
-                elif e.errno == errno.EPERM:
-                    # some other process is using this pid now
-                    finished.append(worker_pid)
-                else:
-                    raise
-
-        for _ in finished:
-            self.current_zygote.request_spawn()
-
-        # remove any workers that killing resulted in ESRCH for; this means that
-        # the worker really did exit
-        self.abandoned_workers -= set(finished)
-
-        # if there are still abandoned workers, reschedule
-        # kill_abandoned_workers to happen again in the future
-        if self.abandoned_workers:
-            self.io_loop.add_timeout(time.time() + self.POLL_INTERVAL, self.kill_abandoned_workers)
+            # we may need to create new workers for the current zygote... this
+            # is a bit racy, although that seems to be pretty unlikely in
+            # practice
+            workers_needed = self.num_workers - self.zygote_collection.worker_count()
+            for x in xrange(workers_needed):
+                self.current_zygote.request_spawn()
 
     def stop(self, signum=None, frame=None):
         """Stop the zygote master, by killing all workers and zygote processes,
@@ -209,17 +170,17 @@ class ZygoteMaster(object):
         """Transition idle HTTP workers from old zygotes to the current
         zygote.
         """
-        zygote_count = 0
+        other_zygote_count = 0
         kill_count = 0
         for z in self.zygote_collection.other_zygotes(self.current_zygote):
-            zygote_count += 1
+            other_zygote_count += 1
             for worker in z.idle_workers():
                 os.kill(worker.pid, signal.SIGTERM)
                 kill_count += 1
-        log.info('Attempted to transition %d workers from %d zygotes', kill_count, zygote_count)
+        log.info('Attempted to transition %d workers from %d zygotes', kill_count, other_zygote_count)
 
-        if zygote_count:
-            # The list of other_zygotes was at least one, so we should
+        if other_zygote_count:
+            # The list of other zygotes was at least one, so we should
             # reschedule another call to transition_idle_workers. When a zygote
             # runs out of worker children, the recv_protocol_msg function will
             # notice this fact when it receives the final MessageWorkerExit, and
@@ -232,7 +193,6 @@ class ZygoteMaster(object):
         transition of idle workers.
         """
         self.create_zygote()
-        self.transition_idle_workers()
 
     def create_zygote(self):
         """"Create a new zygote"""
@@ -268,22 +228,23 @@ def main(opts, extra_args):
 
     # Initialize the logging module
     formatter = logging.Formatter('[%(process)d] %(asctime)s :: %(levelname)-7s :: %(name)s - %(message)s')
+    zygote_logger = logging.getLogger('zygote')
 
     if os.isatty(sys.stderr.fileno()):
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.DEBUG if opts.debug else logging.INFO)
         console_handler.setFormatter(formatter)
-        log.addHandler(console_handler)
+        zygote_logger.addHandler(console_handler)
 
     if not logging.root.handlers:
         logging.root.addHandler(NullHandler())
 
     if opts.debug:
         logging.root.setLevel(logging.DEBUG)
-        log.setLevel(logging.DEBUG)
+        zygote_logger.setLevel(logging.DEBUG)
     else:
         logging.root.setLevel(logging.INFO)
-        log.setLevel(logging.INFO)
+        zygote_logger.setLevel(logging.INFO)
     log.info('main started')
 
     # Create the TCP listen socket
