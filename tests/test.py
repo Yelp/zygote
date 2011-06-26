@@ -53,7 +53,7 @@ class ZygoteTest(TestCase):
         if self.control_port is None:
             self.control_port = random.randrange(5000, 6000)
 
-    @class_setup
+    @setup
     def create_process(self):
         env = os.environ.copy()
         #zygote_path = os.path.join(os.getcwd(), 'zygote')
@@ -79,14 +79,13 @@ class ZygoteTest(TestCase):
                                          #stdout=sys.stdout,
                                          #stderr=sys.stderr)
 
-    @class_setup
+    @setup
     def sanity_check_process(self):
         """Ensure the process didn't crash immediately"""
         assert_equals(self.proc.returncode, None)
         time.sleep(1)
 
-    @class_setup
-    def check_process_tree(self):
+    def get_process_tree(self):
         pid_map = {}
         for potential_pid in os.listdir('/proc'):
             if not num_re.match(potential_pid):
@@ -104,7 +103,11 @@ class ZygoteTest(TestCase):
                 print repr(data)
                 sys.exit(1)
             pid_map.setdefault(ppid, []).append(pid)
+        return pid_map
 
+    @setup
+    def check_process_tree(self):
+        pid_map = self.get_process_tree()
         self.processes = set([self.proc.pid])
         for zygote_pid in pid_map[self.proc.pid]:
             self.processes.add(zygote_pid)
@@ -114,7 +117,7 @@ class ZygoteTest(TestCase):
         # there should be one master process, one worker process, and num_workers workers
         assert_equal(len(self.processes), self.num_workers + 2)
 
-    @class_teardown
+    @teardown
     def remove_process(self):
         self.proc.send_signal(signal.SIGTERM)
         assert_equals(self.proc.wait(), 0)
@@ -129,6 +132,22 @@ class ZygoteTest(TestCase):
 
             assert False, 'pid %d still alive' % (pid,)
 
+        self.assert_(not self.is_port_connected(self.port))
+        self.assert_(not self.is_port_connected(self.control_port))
+
+        self.removed = True
+
+    def is_port_connected(self, port):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.connect(('127.0.0.1', port))
+        except socket.error, e:
+            if e.errno == errno.ECONNREFUSED:
+                return False
+            raise
+        s.close()
+        return True
+
 class ZygoteTests(ZygoteTest):
 
     def test_http_get(self):
@@ -136,6 +155,29 @@ class ZygoteTests(ZygoteTest):
             resp = self.get_url('/')
             self.check_response(resp)
             assert resp.body.startswith('uptime: ')
+
+    def test_kill_intermediate_zygote(self):
+        pid_map = self.get_process_tree()
+        zygote = pid_map[self.proc.pid][0]
+        workers = pid_map[zygote]
+        assert_equal(len(workers), self.num_workers)
+
+        os.kill(zygote, signal.SIGKILL)
+        time.sleep(1)
+
+        new_pid_map = self.get_process_tree()
+        for w in workers:
+            try:
+                os.kill(w, 0)
+            except OSError, e:
+                if e.errno == errno.ESRCH:
+                    continue
+                else:
+                    raise
+            assert False, 'worker pid %d was still alive' % (w,)
+        assert_equal(len(new_pid_map[self.proc.pid]), 1)
+        new_zygote = new_pid_map[self.proc.pid][0]
+        assert_equal(len(new_pid_map[new_zygote]), self.num_workers)
 
 if __name__ == '__main__':
     main()
