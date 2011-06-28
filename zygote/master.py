@@ -81,6 +81,8 @@ class ZygoteMaster(object):
             except OSError, e:
                 if e.errno == errno.ECHILD:
                     break
+                elif e.errno == errno.EINTR:
+                    continue
                 raise
             if pid == 0:
                 break

@@ -105,7 +105,10 @@ class ZygoteWorker(object):
             except OSError, e:
                 if e.errno == errno.ECHILD:
                     break
-                raise
+                elif e.errno == errno.EINTR:
+                    continue
+                raise # should just be EINVAL on Linux
+
             if pid == 0:
                 break
 
