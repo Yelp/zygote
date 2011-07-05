@@ -20,7 +20,8 @@ class ZygoteTest(TestCase):
 
     __test__ = False
 
-    USE_DEVNULL = True
+    # it may be useful to toggle this while debugging
+    USE_DEVNULL = False
 
     basedir = './example'
     control_port = None
@@ -67,21 +68,22 @@ class ZygoteTest(TestCase):
             if parts[0] != zygote_path:
                 env['PYTHONPATH'] = zygote_path + ':' + env['PYTHONPATH']
 
+        args = ['python', 'zygote/main.py',
+                '-b', self.basedir,
+                '-p', str(self.port),
+                '--control-port', str(self.control_port),
+                '--num-workers', str(self.num_workers),
+                '-m', 'example']
         kw = {'env': env}
         if self.USE_DEVNULL:
             devnull = open(os.devnull, 'w')
             kw['stdout'] = kw['stderr'] = devnull
         else:
+            args.append('-d')
             kw['stdout'] = sys.stdout
             kw['stderr'] = sys.stderr
 
-        self.proc = subprocess.Popen(['python', 'zygote/main.py',
-                                          '-d',
-                                          '-b', self.basedir,
-                                          '-p', str(self.port),
-                                          '--control-port', str(self.control_port),
-                                          '--num-workers', str(self.num_workers),
-                                          '-m', 'example'], **kw)
+        self.proc = subprocess.Popen(args, **kw)
 
     @setup
     def sanity_check_process(self):
@@ -189,6 +191,8 @@ class ZygoteTests(ZygoteTest):
 
     def test_hup(self):
         """Test sending SIGHUP to the master"""
+        import time
+        time.sleep(300)
         process_tree = self.get_process_tree()
         initial_zygote = self.get_zygote(process_tree)
         os.kill(self.proc.pid, signal.SIGHUP)

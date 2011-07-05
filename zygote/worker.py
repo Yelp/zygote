@@ -11,7 +11,7 @@ import tornado.ioloop
 import tornado.httpserver
 from ._httpserver import HTTPServer
 
-from .util import setproctitle, AFUnixSender
+from .util import setproctitle, AFUnixSender, close_fds
 from .message import Message, MessageCreateWorker, MessageWorkerStart, MessageWorkerExit, MessageHTTPEnd, MessageHTTPBegin
 
 
@@ -137,7 +137,10 @@ class ZygoteWorker(object):
                 sys.exit(0)
 
             # create a new i/o loop
+            self.io_loop.stop()
             del self.io_loop
+
+            close_fds(self.sock.fileno(), self.read_pipe)
             io_loop = tornado.ioloop.IOLoop()
 
             # add the read pipe

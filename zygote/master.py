@@ -15,7 +15,7 @@ import tornado.web
 
 import zygote.handlers
 
-from .util import safe_kill, close_fds, setproctitle
+from .util import safe_kill, close_fds, setproctitle, list_open_fds
 from zygote import message
 from zygote import accounting
 from zygote.worker import ZygoteWorker
@@ -217,13 +217,16 @@ class ZygoteMaster(object):
             # exist in the parent before continuing. Strictly speaking, this
             # isn't necessary, but it seems good to remove these resources
             # if they're not needed in the child.
+            self.io_loop.stop()
             del self.io_loop
+            list_open_fds()
             close_fds(self.sock.fileno())
             signal.signal(signal.SIGHUP, signal.SIG_DFL)
 
             # create the zygote
             z = ZygoteWorker(self.sock, realbase, self.module, self.application_args)
             z.loop()
+            sys.exit(1) # not reached
 
     def start(self):
         z = self.create_zygote()
@@ -232,6 +235,12 @@ class ZygoteMaster(object):
         self.io_loop.start()
 
 def main(opts, extra_args):
+    if not sys.stdin.closed:
+        # Curiously, this doesn't close(2) the underlying file descriptor
+        # (probably to "reserve" fd 0). This still seems like a good thing to
+        # do, though, since we're not using stdin
+        sys.stdin.close()
+
     setproctitle('[zygote master %s]' % (opts.module,))
 
     # Initialize the logging module

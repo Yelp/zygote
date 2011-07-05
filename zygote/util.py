@@ -1,6 +1,7 @@
 from __future__ import with_statement
 
 import errno
+import gc
 import logging
 import os
 import resource
@@ -77,11 +78,12 @@ def close_fds(*exclude):
     file descriptors (say, the first 16k), but it doesn't seem like it's really
     worth the trouble (and doing this is potentially slow).
     """
-    return # XXX: fixme
     if not os.path.exists('/proc/self/fd'):
         log.warn('no /proc fd information running, not closing fds')
         return
-    excl = list(exclude) + [sys.stdin.fileno(), sys.stdout.fileno(), sys.stderr.fileno()]
+    gc.collect()
+    return
+    excl = list(exclude) + [sys.stdout.fileno(), sys.stderr.fileno()]
     for fd_name in os.listdir('/proc/self/fd'):
         fd = int(fd_name)
         if fd not in excl:
@@ -91,9 +93,28 @@ def close_fds(*exclude):
                 if e.errno == errno.EBADF:
                     # for some reason the fd was bad. nothing we can do about
                     # that
+                    log.debug('file descriptor %d was bad, ignoring', fd)
                     pass
                 else:
                     raise
+
+def list_open_fds(exclude=[]):
+    """This method exists to help debug file descriptor leaks; it shouldn't
+    normally be called while running.
+    """
+    if not os.path.exists('/proc/self/fd'):
+        log.warn('no /proc fd information running, not closing fds')
+        return
+
+    # ensure that any file descriptors closed by destructors have actually been
+    # closed
+    gc.collect()
+
+    excl = list(exclude) + [sys.stdout.fileno(), sys.stderr.fileno()]
+    for fd_name in os.listdir('/proc/self/fd'):
+        fd = int(fd_name)
+        if fd not in excl:
+            log.info('fd %d open', fd)
 
 def safe_kill(pid):
     try:
