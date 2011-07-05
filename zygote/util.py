@@ -105,6 +105,11 @@ def safe_kill(pid):
     return True
 
 class AFUnixSender(object):
+    """Sender abstraction for an AF_UNIX socket (using the SOCK_DGRAM
+    protocol). This handles connecting in a non-blocking fashion, and sending
+    messages asynchronously. Messages that are scheduled to be sent before the
+    socket is connected will be sent once the socket finishes connecting.
+    """
 
     CONNECT_FREQUENCY = 0.1
 
@@ -117,38 +122,51 @@ class AFUnixSender(object):
         self.io_loop._set_nonblocking(self.socket)
         self.log = logger or log
 
-        self.connected = False
-        self.send_queue = []
-        self.sending = False
+        self.connected = False # is the socket connected>
+        self.send_queue = []   # queue of messages to send
+        self.sending = False   # are there queued messages?
 
     def connect(self, target):
         try:
             self.socket.connect(target)
         except socket.error, e:
             if e.errno == errno.EINPROGRESS:
+                # usual case -- the nonblocking connect causes EINPROGRESS. When
+                # the socket is writeable, then the connect has finished, and we
+                # call _finish_connecting
                 self.io_loop.add_handler(self.socket.fileno(), self._finish_connecting, self.io_loop.WRITE)
             elif e.errno == errno.ECONNREFUSED:
+                # the connection was refused. Retry the connection in
+                # CONNECT_FREQUENCY seconds
                 self.io_loop.add_timeout(time.time() + self.CONNECT_FREQUENCY, lambda: self.connect(target))
             else:
                 raise
         else:
-            self.connected = True
+            # we were able to connect immediately
             self._finish_connecting()
 
-    def _finish_connecting(self):
-        error = self.socket.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
-        if error == 0:
-            self.connected = True
-            if self.send_queue:
-                self._sendall()
-        else:
-            self.log.error('got socket connect error %r' % (error,))
-            sys.exit(1)
+    def _finish_connecting(self, fd=None, events=None):
+        if fd is not None:
+            assert fd == self.socket.fileno()
+            self.io_loop.remove_handler(fd)
+            error = self.socket.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+            if error != 0:
+                self.log.error('got socket connect error %r' % (error,))
+                raise IOError('errno %d' % (error,))
+
+        self.connected = True
+        if self.send_queue:
+            self._sendall()
 
     def _sendall(self):
-        if not (self.connected and self.send_queue):
+        if not self.connected:
+            return
+        if not self.send_queue:
+            self.log.error('got _sendall with no send_queue')
             return
         if self.sending:
+            # could happen if we schedule multiple messages to be sent in a row
+            self.log.debug('already in send loop, be patient')
             return
 
         def sender(fd, events):
