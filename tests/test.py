@@ -198,8 +198,19 @@ class ZygoteTests(ZygoteTest):
         final_zygote = self.get_zygote(process_tree)
         assert_not_equal(initial_zygote, final_zygote)
 
-    #def test_hup_intermediate(self):
-    #    pass
+    def test_hup_intermediate(self):
+        """Test sending SIGHUP to the zygote (this is an abnormal case!)"""
+        process_tree = self.get_process_tree()
+        initial_zygote = self.get_zygote(process_tree)
+
+        # this should cause the intermediate to die, since it should not have a
+        # SIGHUP handler
+        os.kill(initial_zygote, signal.SIGHUP)
+        time.sleep(1)
+
+        process_tree = self.get_process_tree()
+        final_zygote = self.get_zygote(process_tree)
+        assert_not_equal(initial_zygote, final_zygote)
 
 if __name__ == '__main__':
     main()
