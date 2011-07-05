@@ -20,6 +20,8 @@ class ZygoteTest(TestCase):
 
     __test__ = False
 
+    USE_DEVNULL = True
+
     basedir = './example'
     control_port = None
     port = None
@@ -65,19 +67,21 @@ class ZygoteTest(TestCase):
             if parts[0] != zygote_path:
                 env['PYTHONPATH'] = zygote_path + ':' + env['PYTHONPATH']
 
-        with open(os.devnull, 'w') as devnull:
-            self.proc = subprocess.Popen(['python', 'zygote/main.py',
+        kw = {'env': env}
+        if self.USE_DEVNULL:
+            devnull = open(os.devnull, 'w')
+            kw['stdout'] = kw['stderr'] = devnull
+        else:
+            kw['stdout'] = sys.stdout
+            kw['stderr'] = sys.stderr
+
+        self.proc = subprocess.Popen(['python', 'zygote/main.py',
                                           '-d',
                                           '-b', self.basedir,
                                           '-p', str(self.port),
                                           '--control-port', str(self.control_port),
                                           '--num-workers', str(self.num_workers),
-                                          '-m', 'example'],
-                                         env=env,
-                                         stdout=devnull,
-                                         stderr=devnull)
-                                         #stdout=sys.stdout,
-                                         #stderr=sys.stderr)
+                                          '-m', 'example'], **kw)
 
     @setup
     def sanity_check_process(self):
@@ -148,6 +152,10 @@ class ZygoteTest(TestCase):
         s.close()
         return True
 
+    def get_zygote(self, process_tree, num_expected=1):
+        assert_equal(len(process_tree[self.proc.pid]), num_expected)
+        return process_tree[self.proc.pid][0]
+
 class ZygoteTests(ZygoteTest):
 
     def test_http_get(self):
@@ -158,7 +166,7 @@ class ZygoteTests(ZygoteTest):
 
     def test_kill_intermediate_zygote(self):
         pid_map = self.get_process_tree()
-        zygote = pid_map[self.proc.pid][0]
+        zygote = self.get_zygote(pid_map)
         workers = pid_map[zygote]
         assert_equal(len(workers), self.num_workers)
 
@@ -178,6 +186,20 @@ class ZygoteTests(ZygoteTest):
         assert_equal(len(new_pid_map[self.proc.pid]), 1)
         new_zygote = new_pid_map[self.proc.pid][0]
         assert_equal(len(new_pid_map[new_zygote]), self.num_workers)
+
+    def test_hup(self):
+        """Test sending SIGHUP to the master"""
+        process_tree = self.get_process_tree()
+        initial_zygote = self.get_zygote(process_tree)
+        os.kill(self.proc.pid, signal.SIGHUP)
+        time.sleep(1)
+
+        process_tree = self.get_process_tree()
+        final_zygote = self.get_zygote(process_tree)
+        assert_not_equal(initial_zygote, final_zygote)
+
+    #def test_hup_intermediate(self):
+    #    pass
 
 if __name__ == '__main__':
     main()

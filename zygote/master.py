@@ -219,6 +219,7 @@ class ZygoteMaster(object):
             # if they're not needed in the child.
             del self.io_loop
             close_fds(self.sock.fileno())
+            signal.signal(signal.SIGHUP, signal.SIG_DFL)
 
             # create the zygote
             z = ZygoteWorker(self.sock, realbase, self.module, self.application_args)
