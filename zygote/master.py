@@ -232,7 +232,7 @@ class ZygoteMaster(object):
         self.io_loop.start()
 
 def main(opts, extra_args):
-    setproctitle('[zygote master %s]' % (opts.module,))
+    setproctitle('zygote master %s' % (opts.module,))
 
     # Initialize the logging module
     formatter = logging.Formatter('[%(process)d] %(asctime)s :: %(levelname)-7s :: %(name)s - %(message)s')

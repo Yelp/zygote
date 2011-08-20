@@ -52,7 +52,7 @@ class ZygoteWorker(object):
         self.args = args
         self.version = basepath.split('/')[-1]
         self.ppid = os.getppid()
-        setproctitle('[zygote version=%s]' % (self.version,))
+        setproctitle('zygote version=%s' % (self.version,))
 
         # Create a pipe(2) pair. This will be used so workers can detect when
         # the intermediate zygote exits -- when this happens, a read event will
