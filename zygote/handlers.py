@@ -84,4 +84,5 @@ def get_httpserver(io_loop, port, zygote_master, zygote_base=None):
     app.settings['worker_sockname'] = zygote_master.sock.getsockname()
     http_server = HTTPServer(app, io_loop=io_loop, keep_alive=False)
     http_server.bind(port)
+    http_server.start()
     return http_server

@@ -26,9 +26,11 @@ def wrap_stack(func, *args):
 
 class StreamState(object):
 
-    def __init__(self, address, stream):
+    def __init__(self, address, stream, keep_alive=True):
         self.address = address
         self.stream = stream
+        self.keep_alive = keep_alive
+        self.bytes_written = 0
         self.chunk_response = True
         self.request_line = None
         self.request_started = time.time()
@@ -42,6 +44,7 @@ class StreamState(object):
     def flush_response(self):
         assert self.response_started == False
 
+        has_keep_alive = False
         has_transfer_encoding = False
         for k, v in self.response_headers:
             lower_key = k.lower()
@@ -49,6 +52,13 @@ class StreamState(object):
                 self.response_content_length = int(v)
             elif lower_key == 'transfer-encoding':
                 has_transfer_encoding = True
+            elif lower_key == 'connection':
+                has_keep_alive = True
+                if v.lower() != 'keep-alive':
+                    self.keep_alive = False
+
+        if not has_keep_alive:
+            self.response_headers.append(('Connection', 'Keep-Alive' if self.keep_alive else 'close'))
 
         if has_transfer_encoding and self.response_content_length is not None:
             # The user specified to use a chunked transfer encoding, but also
@@ -91,23 +101,34 @@ class StreamState(object):
             self._buffer.append(data)
         else:
             assert self.response_started
+            self.bytes_written += len(data) # does not include chunking overhead
             if self.chunk_response:
                 self.stream.write('%x\r\n%s\r\n' % (len(data), data))
             else:
                 self.stream.write(data)
 
-    def finish(self):
+    def finish(self, finish_callbacks=[], close_callbacks=[]):
+        close_stream = lambda: self._close_stream(self.keep_alive, finish_callbacks, close_callbacks)
         if self._waiting_for_content_length:
             data = ''.join(self._buffer)
             self.response_headers.append(('Content-Length', len(data)))
             self.flush_response()
-            self.stream.write(data, self.stream.close)
+            self.stream.write(data, close_stream)
         elif self.chunk_response:
             # write out the final chunk
-            self.stream.write('0\r\n\r\n', self.stream.close)
+            self.stream.write('0\r\n\r\n', close_stream)
         else:
             # there was an explicit content length, and there's no more data
-            self.stream.write('', self.stream.close)
+            self.stream.write('', close_stream)
+            assert self.bytes_written == self.response_content_length
+
+    def _close_stream(self, close, finish_callbacks, close_callbacks):
+        for finish_cb in finish_callbacks:
+            finish_cb()
+        if close:
+            for close_cb in close_callbacks:
+                close_cb()
+            self.stream.close()
 
 class HTTPServer(object):
     """This is a simple HTTP/WSGI gateway. It's based loosely on the Tornado
@@ -127,6 +148,9 @@ class HTTPServer(object):
         self._socket = http_socket
         self._started = False
         self._streams = {}
+        self._status_callbacks = []
+        self._finish_callbacks = []
+        self._close_callbacks = []
 
     def bind(self, port, address=''):
         assert not self._started
@@ -144,10 +168,18 @@ class HTTPServer(object):
         self._started = True
         self.io_loop.add_handler(self._socket.fileno(), self._handle_events, ioloop.IOLoop.READ)
 
-    def _close_stream(self, address, stream=None):
-        if stream is None:
-            stream = self._streams[address]
-        pass
+    def handle_request(self, stream, address):
+        self._streams[stream] = StreamState(address, stream, keep_alive=self.keep_alive)
+        stream.read_until('\r\n\r\n', wrap_stack(self._on_headers, address, stream))
+
+    def add_status_callback(self, func):
+        self._status_callbacks.append(func)
+
+    def add_finish_callback(self, func):
+        self._finish_callbacks.append(func)
+
+    def add_close_callback(self, func):
+        self._close_callbacks.append(func)
 
     def _respond_error(self, stream, code, name, body=None):
         stream.write('HTTP/1.1 %d %s\r\n' % (code, name))
@@ -187,6 +219,8 @@ class HTTPServer(object):
 
         state = self._streams[stream]
         state.request_line = http_line
+        for callback in self._status_callbacks:
+            callback(http_line)
         if http_version != 'HTTP/1.1':
             state.chunk_response = False
         headers = HTTPHeaders.parse(headers.strip().split('\r\n'))
@@ -229,17 +263,16 @@ class HTTPServer(object):
             env['wsgi.input'] = HTTPBody('')
             self._invoke_application(state, env)
             
-    def handle_request(self, stream, address):
-        self._streams[stream] = StreamState(address, stream)
-        stream.read_until('\r\n\r\n', wrap_stack(self._on_headers, address, stream))
-
     def _invoke_application(self, state, env):
         for data in self.request_callback(env, functools.partial(self._start_response, state)):
             if not data:
                 continue
             state.write(data)
-        state.finish()
-        del self._streams[state.stream]
+
+        fb = self._finish_callbacks + [lambda: self.handle_request(state.stream, state.address)]
+        state.finish(fb, self._close_callbacks)
+        if not state.keep_alive:
+            del self._streams[state.stream]
 
     def _handle_events(self, fd, events):
         while True:

@@ -119,7 +119,6 @@ class ZygoteWorker(object):
         self.io_loop.start()
 
     def spawn_worker(self):
-            io_loop.add_handler(self.sock.fileno(), http_server._handle_events, io_loop.READ)
         time_created = time.time()
         pid = os.fork()
         if not pid:
@@ -157,7 +156,9 @@ class ZygoteWorker(object):
             notify(sock, MessageWorkerStart, '%d %d' % (int(time_created * 1e6), os.getppid()))
             setproctitle('zygote-worker version=%s' % self.version)
             app = self.get_application(*self.args)
-            http_server = HTTPServer(app, io_loop=io_loop, no_keep_alive=True, close_callback=on_close, headers_callback=on_line)
+            http_server = HTTPServer(app, io_loop=io_loop, keep_alive=False)
+            http_server.add_status_callback(on_line)
+            http_server.add_close_callback(on_close)
             http_server._socket = self.sock
             http_server.start()
             io_loop.start()
