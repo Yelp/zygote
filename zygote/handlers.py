@@ -7,7 +7,10 @@ import time
 import traceback
 
 import tornado.web
+from tornado.wsgi import WSGIApplication
 import zygote.util
+
+from .httpd import HTTPServer
 
 try:
     import simplejson as json
@@ -72,13 +75,13 @@ def get_httpserver(io_loop, port, zygote_master, zygote_base=None):
         template_path = os.path.realpath('templates')
 
     JSONHandler.zygote_master = zygote_master
-    app = tornado.web.Application([('/', HTMLHandler),
-                                   ('/json', JSONHandler),
-                                   ('/template', TemplateHandler)],
-                                  debug=False,
-                                  static_path=static_path,
-                                  template_path=template_path)
+    app = WSGIApplication([('/', HTMLHandler),
+                           ('/json', JSONHandler),
+                           ('/template', TemplateHandler)],
+                          debug=False,
+                          static_path=static_path,
+                          template_path=template_path)
     app.settings['worker_sockname'] = zygote_master.sock.getsockname()
-    http_server = tornado.httpserver.HTTPServer(app, io_loop=io_loop, no_keep_alive=True)
-    http_server.listen(port)
+    http_server = HTTPServer(app, io_loop=io_loop, keep_alive=False)
+    http_server.bind(port)
     return http_server

@@ -1,6 +1,7 @@
 import logging
 import time
 import tornado.web
+import tornado.wsgi
 
 start_time = time.time()
 log = logging.getLogger('example')
@@ -15,4 +16,4 @@ class StatusHandler(tornado.web.RequestHandler):
 
 def get_application():
     log.debug('creating application for \'example\'')
-    return tornado.web.Application([('/', StatusHandler)], debug=False)
+    return tornado.wsgi.WSGIApplication([('/', StatusHandler)], debug=False)

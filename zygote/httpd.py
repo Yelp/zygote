@@ -29,28 +29,85 @@ class StreamState(object):
     def __init__(self, address, stream):
         self.address = address
         self.stream = stream
+        self.chunk_response = True
         self.request_line = None
         self.request_started = time.time()
         self.response_started = False
         self.response_status = None
         self.response_headers = []
-        self.finished_writing = False
+        self.response_content_length = None
+        self._waiting_for_content_length = False
+        self._buffer = []
 
     def flush_response(self):
         assert self.response_started == False
-        resp = 'HTTP/1.1 ' + self.response_status.strip() + '\r\n'
-        resp += '\r\n'.join('%s: %s' % h for h in self.response_headers) + '\r\n\r\n'
-        self.stream.write(resp)
-        self.response_started = True
 
-    def _maybe_close(self):
-        if self.finished_writing:
-            self.stream.close()
+        has_transfer_encoding = False
+        for k, v in self.response_headers:
+            lower_key = k.lower()
+            if lower_key == 'content-length':
+                self.response_content_length = int(v)
+            elif lower_key == 'transfer-encoding':
+                has_transfer_encoding = True
+
+        if has_transfer_encoding and self.response_content_length is not None:
+            # The user specified to use a chunked transfer encoding, but also
+            # specified a content-length. Don't chunk the response.
+            self.response_headers = [(k, v) for k, v in self.response_headers if k.lower() != 'transfer-encoding']
+            self.chunk_response = False
+            has_transfer_encoding = False
+        if self.response_content_length is not None:
+            self.chunk_response = False
+
+        if self.chunk_response and not has_transfer_encoding:
+            # need to add in a transfer encoding header
+            self.response_headers.append(('Transfer-Encoding', 'chunked'))
+
+
+        # Now it's time to flush the response headers. There are three cases:
+        #
+        # 1) if we're chunking the response, we can write out all of the headers
+        #    and terminate them with an extra \r\n
+        # 2) if we're not chunking the response, and a Content-Lenth was
+        #    explicitly set, we can write out all of the headers and terminate them
+        #    with an extra \r\n
+        # 3) if we're not chunking the response, delay sending the headers
+
+        if self.chunk_response or self.response_content_length is not None:
+            resp = 'HTTP/1.1 ' + self.response_status.strip() + '\r\n'
+            resp += '\r\n'.join('%s: %s' % h for h in self.response_headers) + '\r\n\r\n'
+            self.stream.write(resp)
+            self.response_started = True
+        else:
+            self._waiting_for_content_length = True
 
     def write(self, data):
-        if not self.response_started:
+        if not data:
+            return
+        if not self._waiting_for_content_length and not self.response_started:
             self.flush_response()
-        self.stream.write(data, self._maybe_close)
+
+        if self._waiting_for_content_length:
+            self._buffer.append(data)
+        else:
+            assert self.response_started
+            if self.chunk_response:
+                self.stream.write('%x\r\n%s\r\n' % (len(data), data))
+            else:
+                self.stream.write(data)
+
+    def finish(self):
+        if self._waiting_for_content_length:
+            data = ''.join(self._buffer)
+            self.response_headers.append(('Content-Length', len(data)))
+            self.flush_response()
+            self.stream.write(data, self.stream.close)
+        elif self.chunk_response:
+            # write out the final chunk
+            self.stream.write('0\r\n\r\n', self.stream.close)
+        else:
+            # there was an explicit content length, and there's no more data
+            self.stream.write('', self.stream.close)
 
 class HTTPServer(object):
     """This is a simple HTTP/WSGI gateway. It's based loosely on the Tornado
@@ -130,6 +187,8 @@ class HTTPServer(object):
 
         state = self._streams[stream]
         state.request_line = http_line
+        if http_version != 'HTTP/1.1':
+            state.chunk_response = False
         headers = HTTPHeaders.parse(headers.strip().split('\r\n'))
         content_length = headers.get('Content-Length')
         if content_length:
@@ -179,8 +238,7 @@ class HTTPServer(object):
             if not data:
                 continue
             state.write(data)
-        state.finished_writing = True
-        state.write('')
+        state.finish()
         del self._streams[state.stream]
 
     def _handle_events(self, fd, events):

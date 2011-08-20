@@ -8,8 +8,7 @@ import sys
 import time
 
 import tornado.ioloop
-import tornado.httpserver
-from ._httpserver import HTTPServer
+from .httpd import HTTPServer
 
 from .util import setproctitle, AFUnixSender
 from .message import Message, MessageCreateWorker, MessageWorkerStart, MessageWorkerExit, MessageHTTPEnd, MessageHTTPBegin
@@ -120,6 +119,7 @@ class ZygoteWorker(object):
         self.io_loop.start()
 
     def spawn_worker(self):
+            io_loop.add_handler(self.sock.fileno(), http_server._handle_events, io_loop.READ)
         time_created = time.time()
         pid = os.fork()
         if not pid:
@@ -157,9 +157,7 @@ class ZygoteWorker(object):
             notify(sock, MessageWorkerStart, '%d %d' % (int(time_created * 1e6), os.getppid()))
             setproctitle('zygote-worker version=%s' % self.version)
             app = self.get_application(*self.args)
-            #http_server = tornado.httpserver.HTTPServer(app, io_loop=io_loop, no_keep_alive=True)
-            # TODO: make keep-alive servers work
             http_server = HTTPServer(app, io_loop=io_loop, no_keep_alive=True, close_callback=on_close, headers_callback=on_line)
             http_server._socket = self.sock
-            io_loop.add_handler(self.sock.fileno(), http_server._handle_events, io_loop.READ)
+            http_server.start()
             io_loop.start()
