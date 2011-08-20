@@ -40,6 +40,9 @@ real, full-fledged HTTP server like Apache or Nginx -- Zygote's expertise is
 just in managing Python web processes. It's OK to run Apache or Nginx in front
 of Zygote.
 
+Zygote is known to work with Python 2.5+. Zygote has been tested with PyPy 1.5+,
+and should work fine.
+
 Zygote is licensed under the `Apache Licence, Version 2.0
 <http://www.apache.org/licenses/LICENSE-2.0.html>`_. You should find a copy of
 this license along with the Zygote source, in the ``LICENSE`` file.
