@@ -12,10 +12,7 @@ clean:
 test:
 	@testify -v tests.test
 
-serviceinit.d:
-	mkdir serviceinit.d
-
-production: serviceinit.d
+production:
 
 docs:
 	make -C docs html
