@@ -68,7 +68,7 @@ class ZygoteWorker(object):
 
         os.chdir(basepath)
         sys.path.insert(0, basepath)
-        t = __import__(module, [], [], ['get_application'], 0)
+        t = __import__(module, [], [], ['initialize', 'get_application'], 0)
 
         self.sock = sock
 
@@ -85,6 +85,11 @@ class ZygoteWorker(object):
         self.notify_socket.connect('\0zygote_%d' % self.ppid)
 
         signal.signal(signal.SIGCHLD, self.reap_child)
+
+        # If there is an initialize function defined then call it.
+        if hasattr(t, 'initialize'):
+            self.log.info('initializing zygote')
+            t.initialize(*self.args)
 
         self.log.info('new zygote started')
 
