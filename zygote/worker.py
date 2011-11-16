@@ -161,7 +161,12 @@ class ZygoteWorker(object):
 
             notify(sock, MessageWorkerStart, '%d %d' % (int(time_created * 1e6), os.getppid()))
             setproctitle('zygote-worker version=%s' % self.version)
-            app = self.get_application(*self.args)
+            # io_loop is passed into get_application for program to add handler
+            # or schedule task on the main io_loop.  Program that uses this
+            # io_loop instance should NOT use io_loop.start() because start()
+            # is invoked by the corresponding zygote worker. 
+            kwargs = {'io_loop': io_loop}
+            app = self.get_application(*self.args, **kwargs)
             #http_server = tornado.httpserver.HTTPServer(app, io_loop=io_loop, no_keep_alive=True)
             # TODO: make keep-alive servers work
             http_server = HTTPServer(app, io_loop=io_loop, no_keep_alive=True, close_callback=on_close, headers_callback=on_line)
