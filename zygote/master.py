@@ -264,7 +264,6 @@ def main(opts, extra_args):
         # _handle_request_exception overridden to do something useful.
         # That might be hard to do without adding a tight version dependency
         # on tornado.
-        #logging.root.addHandler(console_handler)
         logging.root.addHandler(NullHandler())
 
     if opts.debug:
