@@ -1,4 +1,5 @@
 import datetime
+import logging
 import os
 import signal
 import time
@@ -6,6 +7,8 @@ import time
 import zygote.util
 from zygote import message
 from zygote.util import meminfo_fmt
+
+log = logging.getLogger('zygote.accounting')
 
 def format_millis(v):
     if v is not None:
@@ -102,7 +105,10 @@ class Zygote(object):
         self.worker_map[pid] = worker
 
     def remove_worker(self, pid):
-        del self.worker_map[pid]
+        try:
+            del self.worker_map[pid]
+        except KeyError:
+            log.warning("Tried to delete unknown worker %d (did worker initialization fail?)", pid)
 
     def begin_http(self, pid, http):
         self.worker_map[pid].http = http
