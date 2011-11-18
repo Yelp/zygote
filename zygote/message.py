@@ -66,9 +66,16 @@ class MessageWorkerExit(Message):
         self.child_pid = int(child_pid)
         self.status = int(status)
 
-class MessageWorkerExitInitFail(MessageWorkerExit):
+class MessageWorkerExitInitFail(Message):
 
     msg_type = Message.WORKER_EXIT_INIT_FAIL
+
+    def __init__(self, pid, body):
+        super(MessageWorkerExitInitFail, self).__init__(pid)
+        child_pid, status = body.split()
+        self.payload = body
+        self.child_pid = int(child_pid)
+        self.status = int(status)
 
 class MessageHTTPBegin(Message):
 

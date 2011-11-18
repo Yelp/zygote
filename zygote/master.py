@@ -129,7 +129,8 @@ class ZygoteMaster(object):
         # point self.really_stop() will be called
         log.debug('setting self.stopped')
         self.stopped = True
-        self.io_loop.stop()
+        if getattr(self, 'io_loop', None) is not None:
+            self.io_loop.stop()
 
     def really_stop(self, status=0):
         sys.exit(status)
@@ -137,7 +138,6 @@ class ZygoteMaster(object):
     def recv_protol_msg(self, fd, events):
         """Callback for messages received on the domain_socket"""
         assert fd == self.domain_socket.fileno()
-        log.debug("Got protol msg")
         data = self.domain_socket.recv(self.RECV_SIZE)
         msg = message.Message.parse(data)
         msg_type = type(msg)
@@ -148,7 +148,7 @@ class ZygoteMaster(object):
             # zygote_collection, and note the time created and the zygote parent
             self.zygote_collection[msg.worker_ppid].add_worker(msg.pid, msg.time_created)
         elif msg_type is message.MessageWorkerExitInitFail:
-            logging.error("A worker initialization failed, giving up")
+            log.error("A worker initialization failed, giving up")
             self.stop()
             return
         elif msg_type is message.MessageWorkerExit:
@@ -180,6 +180,8 @@ class ZygoteMaster(object):
             if self.max_requests is not None and worker.request_count >= self.max_requests:
                 log.info('child %d reached max_requests %d, killing it', worker.pid, self.max_requests)
                 os.kill(worker.pid, signal.SIGTERM)
+        else:
+            log.warning('master got unexpected message of type %s', msg_type)
 
     def transition_idle_workers(self):
         """Transition idle HTTP workers from old zygotes to the current
