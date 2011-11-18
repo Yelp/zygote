@@ -176,12 +176,9 @@ class AFUnixSender(object):
             queue was sent"""
             assert fd == self.socket.fileno()
             while self.send_queue:
-                self.log.debug("Setting self.sending=True because sender was called")
                 self.sending = True
                 try:
-                    self.log.debug("Sending item")
                     self.socket.send(self.send_queue.pop(0))
-                    self.log.debug("Sent item")
                 except IOError, e:
                     if e.errno == errno.EWOULDBLOCK:
                         self.log.debug("got EWOULDBLOCK")
@@ -198,8 +195,8 @@ class AFUnixSender(object):
             self.sending = False
             return True
 
-        def sender():
-            success = maybe_send_queue(self.socket.fileno(), [])
+        def sender(fd, *args, **kwargs):
+            success = maybe_send_queue(fd, [])
             if success:
                 self.io_loop.remove_handler(fd)
 
