@@ -6,6 +6,7 @@ class Message(object):
 
     WORKER_START   = 'S'
     WORKER_EXIT    = 'X'
+    WORKER_EXIT_INIT_FAIL = 'Y'
 
     HTTP_BEGIN     = 'B'
     HTTP_END       = 'E'
@@ -28,6 +29,8 @@ class Message(object):
             return MessageHTTPBegin(pid, body)
         elif type == cls.HTTP_END:
             return MessageHTTPEnd(pid, body)
+        elif type == cls.WORKER_EXIT_INIT_FAIL:
+            return MessageWorkerExitInitFail(pid, body)
         else:
             assert False
 
@@ -63,6 +66,17 @@ class MessageWorkerExit(Message):
         self.child_pid = int(child_pid)
         self.status = int(status)
 
+class MessageWorkerExitInitFail(Message):
+
+    msg_type = Message.WORKER_EXIT_INIT_FAIL
+
+    def __init__(self, pid, body):
+        super(MessageWorkerExitInitFail, self).__init__(pid)
+        child_pid, status = body.split()
+        self.payload = body
+        self.child_pid = int(child_pid)
+        self.status = int(status)
+
 class MessageHTTPBegin(Message):
 
     msg_type = Message.HTTP_BEGIN
@@ -78,4 +92,3 @@ class MessageHTTPEnd(Message):
     def __init__(self, pid, body):
         super(MessageHTTPEnd, self).__init__(pid)
         assert body == '' # just ignore the body, it should be empty
-

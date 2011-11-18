@@ -9,6 +9,8 @@ import socket
 import sys
 import time
 
+import tornado.ioloop
+
 try:
     import setproctitle as _setproctitle
     has_proc_title = True
@@ -182,3 +184,25 @@ class AFUnixSender(object):
     def send(self, msg):
         self.send_queue.append(msg)
         self._sendall()
+
+class ZygoteIOLoop(tornado.ioloop.IOLoop):
+    """Override IOLoop to log to our own logger instead of the root logger"""
+
+    def __init__(self, *args, **kwargs):
+        log_name = kwargs.pop('log_name', 'zygote.io_loop')
+        self.log = logging.getLogger(log_name)
+        super(ZygoteIOLoop, self).__init__(*args, **kwargs)
+
+    def handle_callback_exception(self, callback):
+        self.log.exception("Error in callback %s", callback)
+
+    def add_handler(self, fd, handler, events):
+        "Add a handler to the IOLoop, with exception handling"""
+        def wrapped_handler(*args, **kwargs):
+            try:
+                handler(*args, **kwargs)
+            except Exception, e:
+                self.handle_callback_exception(handler)
+        wrapped_handler.__doc__ = handler.__doc__
+        wrapped_handler.__name__ = handler.__name__
+        return super(ZygoteIOLoop, self).add_handler(fd, wrapped_handler, events)

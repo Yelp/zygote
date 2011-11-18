@@ -9,16 +9,12 @@ import socket
 import sys
 import time
 
-import tornado.ioloop
-import tornado.httpserver
-import tornado.web
-
 import zygote.handlers
 
-from .util import safe_kill, close_fds, setproctitle
+from .util import safe_kill, close_fds, setproctitle, ZygoteIOLoop
 from zygote import message
 from zygote import accounting
-from zygote.worker import ZygoteWorker
+from zygote.worker import ZygoteWorker, INIT_FAILURE_EXIT_CODE
 
 if hasattr(logging, 'NullHandler'):
     NullHandler = logging.NullHandler
@@ -46,7 +42,7 @@ class ZygoteMaster(object):
         self.stopped = False
 
         self.application_args = application_args
-        self.io_loop = tornado.ioloop.IOLoop()
+        self.io_loop = ZygoteIOLoop(log_name='zygote.master.ioloop')
         self.sock = sock
         self.basepath = basepath
         self.module = module
@@ -59,6 +55,7 @@ class ZygoteMaster(object):
 
         # create an abstract unix domain socket. this socket will be used to
         # receive messages from zygotes and their children
+        log.debug("binding to domain socket")
         self.domain_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
         self.domain_socket.bind('\0zygote_%d' % os.getpid())
         self.io_loop.add_handler(self.domain_socket.fileno(), self.recv_protol_msg, self.io_loop.READ)
@@ -97,6 +94,11 @@ class ZygoteMaster(object):
             except KeyError:
                 pass
 
+            if status_code == INIT_FAILURE_EXIT_CODE:
+                log.error("Could not initialize zygote worker, giving up")
+                self.really_stop()
+                return
+
             if not self.stopped:
                 if pid == self.current_zygote.pid:
                     self.current_zygote = self.create_zygote()
@@ -125,7 +127,10 @@ class ZygoteMaster(object):
 
         # now we have to wait until all of the workers actually exit... at that
         # point self.really_stop() will be called
+        log.debug('setting self.stopped')
         self.stopped = True
+        if getattr(self, 'io_loop', None) is not None:
+            self.io_loop.stop()
 
     def really_stop(self, status=0):
         sys.exit(status)
@@ -142,6 +147,10 @@ class ZygoteMaster(object):
             # a new worker was spawned by one of our zygotes; add it to
             # zygote_collection, and note the time created and the zygote parent
             self.zygote_collection[msg.worker_ppid].add_worker(msg.pid, msg.time_created)
+        elif msg_type is message.MessageWorkerExitInitFail:
+            log.error("A worker initialization failed, giving up")
+            self.stop()
+            return
         elif msg_type is message.MessageWorkerExit:
             # a worker exited. tell the current/active zygote to spawn a new
             # child. if this was the last child of a different (non-current)
@@ -171,6 +180,8 @@ class ZygoteMaster(object):
             if self.max_requests is not None and worker.request_count >= self.max_requests:
                 log.info('child %d reached max_requests %d, killing it', worker.pid, self.max_requests)
                 os.kill(worker.pid, signal.SIGTERM)
+        else:
+            log.warning('master got unexpected message of type %s', msg_type)
 
     def transition_idle_workers(self):
         """Transition idle HTTP workers from old zygotes to the current
@@ -245,6 +256,17 @@ def main(opts, extra_args):
         zygote_logger.addHandler(console_handler)
 
     if not logging.root.handlers:
+        # XXX: WARNING
+        #
+        # We're disabling the root logger. Tornado's RequestHandler ONLY
+        # supports logging uncaught errors to the root logger. This will end
+        # poorly for you!
+        #
+        # We should probably provide a RequestHandler subclass that has
+        # _handle_request_exception overridden to do something useful.
+        # That might be hard to do without adding a tight version dependency
+        # on tornado.
+        #logging.root.addHandler(console_handler)
         logging.root.addHandler(NullHandler())
 
     if opts.debug:
