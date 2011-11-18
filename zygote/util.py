@@ -171,7 +171,9 @@ class AFUnixSender(object):
             self.log.debug('already in send loop, be patient')
             return
 
-        def sender(fd, _, from_io_loop=True):
+        def maybe_send_queue(fd, _):
+            """Try to send the message queue. Returns True if the entire
+            queue was sent"""
             assert fd == self.socket.fileno()
             while self.send_queue:
                 self.log.debug("Setting self.sending=True because sender was called")
@@ -183,7 +185,7 @@ class AFUnixSender(object):
                 except IOError, e:
                     if e.errno == errno.EWOULDBLOCK:
                         self.log.debug("got EWOULDBLOCK")
-                        return
+                        return False
                     else:
                         self.sending = False
                         raise
@@ -193,15 +195,18 @@ class AFUnixSender(object):
                     # get an IndexError instead of breaking out of the loop
                     # naturally, so gotta handle that!
                     break
-            self.log.debug("Got out of while loop, setting sending=False")
-            if from_io_loop:
-                self.io_loop.remove_handler(fd)
             self.sending = False
+            return True
+
+        def sender():
+            success = maybe_send_queue(self.socket.fileno(), [])
+            if success:
+                self.io_loop.remove_handler(fd)
 
         # Try and send immediately
-        sender(self.socket.fileno(), [], from_io_loop=False)
-        # if that fails, put it in the ioloop
-        if self.sending:
+        success = maybe_send_queue(self.socket.fileno(), [])
+        # if that fails, put it in the ioloop to send later
+        if not success:
             self.io_loop.add_handler(self.socket.fileno(), sender, self.io_loop.WRITE)
 
     def send(self, msg):
