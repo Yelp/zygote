@@ -249,6 +249,7 @@ def main(opts, extra_args):
     formatter = logging.Formatter('[%(process)d] %(asctime)s :: %(levelname)-7s :: %(name)s - %(message)s')
     zygote_logger = logging.getLogger('zygote')
 
+    # TODO: support logging to things other than stderr
     if os.isatty(sys.stderr.fileno()):
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.DEBUG if opts.debug else logging.INFO)
@@ -266,7 +267,6 @@ def main(opts, extra_args):
         # _handle_request_exception overridden to do something useful.
         # That might be hard to do without adding a tight version dependency
         # on tornado.
-        #logging.root.addHandler(console_handler)
         logging.root.addHandler(NullHandler())
 
     if opts.debug:

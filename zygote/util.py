@@ -171,15 +171,40 @@ class AFUnixSender(object):
             self.log.debug('already in send loop, be patient')
             return
 
-        def sender(fd, events):
+        def maybe_send_queue(fd, _):
+            """Try to send the message queue. Returns True if the entire
+            queue was sent"""
             assert fd == self.socket.fileno()
-            self.socket.send(self.send_queue.pop(0))
-            if not self.send_queue:
-                self.sending = False
+            while self.send_queue:
+                self.sending = True
+                try:
+                    self.socket.send(self.send_queue.pop(0))
+                except IOError, e:
+                    if e.errno == errno.EWOULDBLOCK:
+                        self.log.debug("got EWOULDBLOCK")
+                        return False
+                    else:
+                        self.sending = False
+                        raise
+                except IndexError:
+                    # We'll get the IndexError when we've sent the entire
+                    # send_queue; if this ever gets multithreaded, we might
+                    # get an IndexError instead of breaking out of the loop
+                    # naturally, so gotta handle that!
+                    break
+            self.sending = False
+            return True
+
+        def sender(fd, *args, **kwargs):
+            success = maybe_send_queue(fd, [])
+            if success:
                 self.io_loop.remove_handler(fd)
 
-        self.io_loop.add_handler(self.socket.fileno(), sender, self.io_loop.WRITE)
-        self.sending = True
+        # Try and send immediately
+        success = maybe_send_queue(self.socket.fileno(), [])
+        # if that fails, put it in the ioloop to send later
+        if not success:
+            self.io_loop.add_handler(self.socket.fileno(), sender, self.io_loop.WRITE)
 
     def send(self, msg):
         self.send_queue.append(msg)
@@ -201,7 +226,7 @@ class ZygoteIOLoop(tornado.ioloop.IOLoop):
         def wrapped_handler(*args, **kwargs):
             try:
                 handler(*args, **kwargs)
-            except Exception, e:
+            except Exception:
                 self.handle_callback_exception(handler)
         wrapped_handler.__doc__ = handler.__doc__
         wrapped_handler.__name__ = handler.__name__
