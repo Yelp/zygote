@@ -35,7 +35,7 @@ def establish_signal_handlers(logger):
         signal.signal(sig, zygote_exit)
 
 def notify(sock, msg_cls, body=''):
-    """Send a message to the zygote master"""
+    """Send a message to the zygote master. Should be using AFUnixSender?"""
     sock.send(msg_cls.emit(str(body)))
 
 class ZygoteWorker(object):
@@ -182,7 +182,7 @@ class ZygoteWorker(object):
         # add the read pipe
         io_loop.add_handler(self.read_pipe, on_parent_exit, io_loop.READ)
 
-        sock = AFUnixSender(io_loop)
+        sock = AFUnixSender(io_loop, logger=log)
         sock.connect('\0zygote_%d' % self.ppid)
 
         establish_signal_handlers(log)
