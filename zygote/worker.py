@@ -196,7 +196,12 @@ class ZygoteWorker(object):
         notify(sock, MessageWorkerStart, '%d %d' % (int(time_created * 1e6), os.getppid()))
         setproctitle('zygote-worker version=%s' % self.version)
         try:
-            app = self.get_application(*self.args)
+            # io_loop is passed into get_application for program to add handler
+            # or schedule task on the main io_loop.  Program that uses this
+            # io_loop instance should NOT use io_loop.start() because start()
+            # is invoked by the corresponding zygote worker. 
+            kwargs = {'io_loop': io_loop}
+            app = self.get_application(*self.args, **kwargs)
         except Exception:
             log.error("Unable to get application")
             raise
@@ -206,3 +211,4 @@ class ZygoteWorker(object):
         http_server._socket = self.sock
         io_loop.add_handler(self.sock.fileno(), http_server._handle_events, io_loop.READ)
         io_loop.start()
+
