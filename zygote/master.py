@@ -129,8 +129,6 @@ class ZygoteMaster(object):
         # point self.really_stop() will be called
         log.debug('setting self.stopped')
         self.stopped = True
-        if getattr(self, 'io_loop', None) is not None:
-            self.io_loop.stop()
 
     def really_stop(self, status=0):
         sys.exit(status)
