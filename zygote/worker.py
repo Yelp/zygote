@@ -55,7 +55,7 @@ class ZygoteWorker(object):
 
     log = logging.getLogger('zygote.worker.zygote_process')
 
-    RECV_SIZE = 8096
+    RECV_SIZE = 8192
 
     # how many seconds to wait before sending SIGKILL to children
     WAIT_FOR_KILL_TIME = 10.0
