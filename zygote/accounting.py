@@ -1,4 +1,5 @@
 import datetime
+import errno
 import logging
 import os
 import signal
@@ -71,6 +72,14 @@ class Worker(object):
         os.kill(self.pid, signal.SIGTERM)
 
 class Zygote(object):
+    """Stub representing the zygote from the master side of the fork. Is not
+    actually the zygote, but sends some commands over the unix domain socket
+    to the zygote.
+
+    TODO: Move parsing of messages *from* the unix domain socket into this object,
+    and use a regular callback system
+    """
+    __generation = 0
 
     def __init__(self, pid, basepath, io_loop):
         self.basepath = basepath
@@ -90,6 +99,11 @@ class Zygote(object):
         # the child inherits it through forking
         self.control_socket = zygote.util.AFUnixSender(io_loop)
         self.control_socket.connect('\0zygote_%d' % self.pid)
+
+        self.shutting_down = False
+
+        self.generation = self.__class__.__generation
+        self.__class__.__generation += 1
 
     def update_meminfo(self):
         for k, v in meminfo_fmt(self.pid).iteritems():
@@ -124,7 +138,25 @@ class Zygote(object):
 
     def request_spawn(self):
         """Instruct this zygote to spawn a new worker"""
+        log.debug('requesting spawn on Zygote %d', self.generation)
         self.control_socket.send(message.MessageCreateWorker.emit(''))
+
+    def request_shut_down(self):
+        """Instruct this zygote to shut down all workers"""
+        # How this works:
+        #
+        # We need to be able to wait on all of the children shutting down,
+        # and send them a SIGKILL if they decide to be petulant and ignore
+        # the SIGTERM. Since the zygote is what receives the SIGCHLD (or can
+        # do the wait() or whatever), we need to pass the PIDs through to
+        # it. We do that over the unix domain socket for now.
+        #
+        # This might break horribly if you have too many pids to fit in a
+        # single message over the domain socket. Mea culpa.
+
+        # TODO: find a less-janky to manage these pids
+        self.control_socket.send(message.MessageShutDown.emit(' '.join(str(p) for p in self.worker_map.keys())))
+        self.shutting_down = True
 
     @property
     def worker_count(self):
@@ -138,7 +170,8 @@ class Zygote(object):
             'vsz': self.vsz,
             'rss': self.rss,
             'shr': self.shr,
-            'time_created': self.time_created
+            'time_created': self.time_created,
+            'generation': self.generation,
             }
 
 class ZygoteCollection(object):

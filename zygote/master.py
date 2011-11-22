@@ -11,7 +11,7 @@ import time
 
 import zygote.handlers
 
-from .util import safe_kill, close_fds, setproctitle, ZygoteIOLoop
+from .util import safe_kill, close_fds, setproctitle, ZygoteIOLoop, wait_for_pids
 from zygote import message
 from zygote import accounting
 from zygote.worker import ZygoteWorker, INIT_FAILURE_EXIT_CODE
@@ -29,10 +29,13 @@ class ZygoteMaster(object):
 
     instantiated = False
 
-    RECV_SIZE = 8096
+    RECV_SIZE = 8192
 
     # number of seconds to wait between polls
     POLL_INTERVAL = 1.0
+
+    # how many seconds to wait before sending SIGKILL to children
+    WAIT_FOR_KILL_TIME = 10.0
 
     def __init__(self, sock, basepath, module, num_workers, control_port, application_args=[], max_requests=None, zygote_base=None):
         if self.__class__.instantiated:
@@ -40,6 +43,7 @@ class ZygoteMaster(object):
             sys.exit(1)
         self.__class__.instantiated = True
         self.stopped = False
+        self.started_transition = None
 
         self.application_args = application_args
         self.io_loop = ZygoteIOLoop(log_name='zygote.master.ioloop')
@@ -62,7 +66,7 @@ class ZygoteMaster(object):
 
         signal.signal(signal.SIGCHLD, self.reap_child)
         signal.signal(signal.SIGHUP, self.update_revision)
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGQUIT):
             signal.signal(sig, self.stop)
 
         zygote.handlers.get_httpserver(self.io_loop, control_port, self, zygote_base=zygote_base)
@@ -74,7 +78,9 @@ class ZygoteMaster(object):
         assert signum == signal.SIGCHLD
         while True:
             try:
-                pid, status = os.waitpid(0, os.WNOHANG)
+                # The Zygotes are in their own process group, so need to
+                # call waitpid() with -1 instead of 0. See waitpid(2).
+                pid, status = os.waitpid(-1, os.WNOHANG)
             except OSError, e:
                 if e.errno == errno.ECHILD:
                     break
@@ -114,16 +120,21 @@ class ZygoteMaster(object):
                 self.really_stop()
 
     def stop(self, signum=None, frame=None):
-        """Stop the zygote master, by killing all workers and zygote processes,
-        and then exiting with status 0 from the master.
         """
-
+        Stop the zygote master. Steps:
+          * Ask all zygotes to kill and wait on their children
+          * Wait for zygotes to exit
+          * Kill anything left over if necessary
+        """
+        if self.stopped:
+            return
         # kill all of the workers
         log.info('stopping all zygotes and workers')
         pids = set()
         for zygote in self.zygote_collection:
-            for worker in zygote.workers():
-                safe_kill(worker.pid)
+            pids.add(zygote.pid)
+            log.debug('requesting shutdown on %d', zygote.pid)
+            zygote.request_shut_down()
 
         # now we have to wait until all of the workers actually exit... at that
         # point self.really_stop() will be called
@@ -131,6 +142,9 @@ class ZygoteMaster(object):
         self.stopped = True
         if getattr(self, 'io_loop', None) is not None:
             self.io_loop.stop()
+        wait_for_pids(pids, self.WAIT_FOR_KILL_TIME, log, kill_pgroup=True)
+        log.info('all zygotes exited; good night')
+        self.really_stop(0)
 
     def really_stop(self, status=0):
         sys.exit(status)
@@ -157,18 +171,22 @@ class ZygoteMaster(object):
             # zygote, kill that zygote
             zygote = self.zygote_collection[msg.pid]
             zygote.remove_worker(msg.child_pid)
+            log.debug('Removed worker from zygote %d, there are now %d left', msg.pid, len(zygote.workers()))
 
             if self.stopped:
                 # if we're in stopping mode, don't kill the zygote until all of
-                # its children have exited
+                # its children have exited. this should not happen using the
+                # new shutdown logic, but it doesn't hurt to handle it
+                # anyway
                 if zygote.worker_count == 0:
-                    os.kill(zygote.pid, signal.SIGTERM)
+                    os.kill(zygote.pid, signal.SIGQUIT)
             else:
                 self.current_zygote.request_spawn()
                 if zygote != self.current_zygote and zygote.worker_count == 0:
+                    log.info('killing zygote')
                     # not the current zygote, and no children left; kill it
                     # left, kill it; shouldn't need to safe_kill here
-                    os.kill(zygote.pid, signal.SIGTERM)
+                    os.kill(zygote.pid, signal.SIGQUIT)
         elif msg_type is message.MessageHTTPBegin:
             # a worker started servicing an HTTP request
             worker = self.zygote_collection.get_worker(msg.pid)
@@ -179,7 +197,7 @@ class ZygoteMaster(object):
             worker.end_request()
             if self.max_requests is not None and worker.request_count >= self.max_requests:
                 log.info('child %d reached max_requests %d, killing it', worker.pid, self.max_requests)
-                os.kill(worker.pid, signal.SIGTERM)
+                os.kill(worker.pid, signal.SIGQUIT)
         else:
             log.warning('master got unexpected message of type %s', msg_type)
 
@@ -187,13 +205,21 @@ class ZygoteMaster(object):
         """Transition idle HTTP workers from old zygotes to the current
         zygote.
         """
+        if not self.started_transition:
+            self.started_transition = time.time()
+        if (time.time() - self.started_transition) > self.WAIT_FOR_KILL_TIME:
+            log.debug("sending SIGKILL for transition because it was Too Damn Slow")
+            sig = signal.SIGKILL
+        else:
+            sig = signal.SIGQUIT
         other_zygote_count = 0
         kill_count = 0
         for z in self.zygote_collection.other_zygotes(self.current_zygote):
             other_zygote_count += 1
             for worker in z.idle_workers():
-                os.kill(worker.pid, signal.SIGTERM)
-                kill_count += 1
+                log.debug("killing worker %d with signal %d", worker.pid, sig)
+                if safe_kill(worker.pid, sig):
+                    kill_count += 1
         log.info('Attempted to transition %d workers from %d zygotes', kill_count, other_zygote_count)
 
         if other_zygote_count:
@@ -204,6 +230,8 @@ class ZygoteMaster(object):
             # at that time it will kill the worker, which is how this timeout
             # loop gets ended.
             self.io_loop.add_timeout(time.time() + self.POLL_INTERVAL, self.transition_idle_workers)
+        else:
+            self.started_transition = None
 
     def update_revision(self, signum=None, frame=None):
         """The SIGHUP handler, calls create_zygote and possibly initiates the
@@ -232,6 +260,8 @@ class ZygoteMaster(object):
             close_fds(self.sock.fileno())
             signal.signal(signal.SIGHUP, signal.SIG_DFL)
 
+            # Make the zygote a process group leader
+            os.setpgid(os.getpid(), os.getpid())
             # create the zygote
             z = ZygoteWorker(self.sock, realbase, self.module, self.application_args)
             z.loop()
