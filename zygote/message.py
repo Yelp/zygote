@@ -3,6 +3,7 @@ import os
 class Message(object):
 
     CREATE_WORKER  = 'C'
+    SHUT_DOWN      = 'K'
 
     WORKER_START   = 'S'
     WORKER_EXIT    = 'X'
@@ -31,6 +32,8 @@ class Message(object):
             return MessageHTTPEnd(pid, body)
         elif type == cls.WORKER_EXIT_INIT_FAIL:
             return MessageWorkerExitInitFail(pid, body)
+        elif type == cls.SHUT_DOWN:
+            return MessageShutDown(pid, body)
         else:
             assert False
 
@@ -92,3 +95,11 @@ class MessageHTTPEnd(Message):
     def __init__(self, pid, body):
         super(MessageHTTPEnd, self).__init__(pid)
         assert body == '' # just ignore the body, it should be empty
+
+class MessageShutDown(Message):
+
+    msg_type = Message.SHUT_DOWN
+
+    def __init__(self, pid, body):
+        super(MessageShutDown, self).__init__(pid)
+        self.pids = [int(p) for p in body.split(' ') if p]

@@ -97,14 +97,42 @@ def close_fds(*exclude):
                 else:
                     raise
 
-def safe_kill(pid):
+def safe_kill(pid, sig=signal.SIGUSR1, process_group=False):
     try:
         log.debug('killing %d', pid)
-        os.kill(pid, signal.SIGTERM)
+        if process_group:
+            os.killpg(pid, sig)
+        else:
+            os.kill(pid, sig)
     except OSError, e:
         log.debug('failed to safe_kill pid %d because of %r' % (pid, e))
         return False
     return True
+
+def wait_for_pids(pids, timeout, log, kill_pgroup=False):
+    """Wait for the given Set of pids to die. If they
+    haven't died after timeout seconds, send them all SIGKILL.
+    
+    If kill_pgroup is true, the kill will be sent to
+    the process group instead of to the process itself.
+    """
+    start = time.time()
+    elapsed = 0
+    while elapsed < timeout:
+        if not pids:
+            break
+        pid, _, _ = os.wait3(os.WNOHANG)
+        if pid == 0:
+            time.sleep(0.5)
+        else:
+            pids.remove(pid)
+        elapsed = time.time() - start
+    else:
+        # will only get here if we ran out of time
+        log.warning("PIDs [%s] didn't quit after %f seconds, sending SIGKILL", ",".join(str(p) for p in pids), timeout)
+        for pid in pids:
+            safe_kill(pid, signal.SIGKILL, kill_pgroup)
+
 
 class AFUnixSender(object):
     """Sender abstraction for an AF_UNIX socket (using the SOCK_DGRAM
@@ -183,6 +211,12 @@ class AFUnixSender(object):
                     if e.errno == errno.EWOULDBLOCK:
                         self.log.debug("got EWOULDBLOCK")
                         return False
+                    elif e.errno in (errno.ECONNREFUSED, errno.ENOTCONN):
+                        # If the worker has already shut down, and needs to be reaped,
+                        # then we'll get back an ENOTCONN or an ECONNREFUSED from this
+                        # send call. We should be reaping this process shortly hereafter
+                        # anyway, so just ignore it
+                        return False
                     else:
                         self.sending = False
                         raise
@@ -192,6 +226,11 @@ class AFUnixSender(object):
                     # get an IndexError instead of breaking out of the loop
                     # naturally, so gotta handle that!
                     break
+                except Exception, e:
+                    # Sometimes we seem to get errors that are not IOErrors?
+                    if getattr(e, 'errno', None) not in (errno.ECONNREFUSED, errno.ENOTCONN):
+                        raise
+                    return False
             self.sending = False
             return True
 

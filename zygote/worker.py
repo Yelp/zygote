@@ -9,8 +9,8 @@ import time
 
 from ._httpserver import HTTPServer
 
-from .util import setproctitle, AFUnixSender, ZygoteIOLoop
-from .message import Message, MessageCreateWorker, MessageWorkerStart, MessageWorkerExit, MessageWorkerExitInitFail, MessageHTTPEnd, MessageHTTPBegin
+from .util import setproctitle, AFUnixSender, ZygoteIOLoop, safe_kill, wait_for_pids
+from .message import Message, MessageCreateWorker, MessageWorkerStart, MessageWorkerExit, MessageWorkerExitInitFail, MessageHTTPEnd, MessageHTTPBegin, MessageShutDown
 
 # Exit with this exit code when there was a failure to init the worker
 # (which might be hard to represent otherwise if it, for example, occurs
@@ -28,10 +28,15 @@ def establish_signal_handlers(logger):
             logger.info('received SIGINT, exiting')
         elif signum == signal.SIGTERM:
             logger.info('received SIGTERM, exiting')
+        elif signum == signal.SIGQUIT:
+            logger.info('recieved SIGQUIT (clean exit), exiting')
         else:
             logger.info('received signal %d, exiting', signum)
         sys.exit(0)
-    for sig in (signal.SIGINT, signal.SIGTERM):
+    # we explicitly ignore SIGINT and SIGTERM
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    for sig in (signal.SIGQUIT,):
         signal.signal(sig, zygote_exit)
 
 def notify(sock, msg_cls, body=''):
@@ -50,7 +55,10 @@ class ZygoteWorker(object):
 
     log = logging.getLogger('zygote.worker.zygote_process')
 
-    RECV_SIZE = 8096
+    RECV_SIZE = 8192
+
+    # how many seconds to wait before sending SIGKILL to children
+    WAIT_FOR_KILL_TIME = 10.0
 
     def __init__(self, sock, basepath, module, args):
         self.args = args
@@ -99,7 +107,7 @@ class ZygoteWorker(object):
 
         establish_signal_handlers(self.log)
 
-        #self.io_loop._set_nonblocking(self.control_socket)
+        self.io_loop._set_nonblocking(self.control_socket)
         self.io_loop.add_handler(self.control_socket.fileno(), self.handle_control, self.io_loop.READ)
 
         self.notify_socket = AFUnixSender(self.io_loop)
@@ -120,8 +128,26 @@ class ZygoteWorker(object):
         msg = Message.parse(data)
         if type(msg) is MessageCreateWorker:
             self.spawn_worker()
+        elif type(msg) is MessageShutDown:
+            self.kill_workers(msg.pids)
         else:
             assert False
+
+    def kill_workers(self, pids):
+        """Kill all workers and wait (synchronously) for them
+        to exit"""
+        # reset the signal handler so that we don't get interrupted
+        # by SIGCHLDs
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+        waiting_pids = set()
+
+        self.log.debug('zygote requesting kill on %d pids', len(pids))
+        for pid in pids:
+            if safe_kill(pid, signal.SIGQUIT):
+                waiting_pids.add(pid)
+        wait_for_pids(waiting_pids, self.WAIT_FOR_KILL_TIME, self.log)
+        self.log.debug('zygote done killing children, terminating')
+        sys.exit(0)
 
     def reap_child(self, signum, frame):
         assert signum == signal.SIGCHLD
