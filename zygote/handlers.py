@@ -72,6 +72,16 @@ def get_httpserver(io_loop, port, zygote_master, zygote_base=None):
         static_path = os.path.realpath('static')
         template_path = os.path.realpath('templates')
 
+    # We need to ensure that we keep file handles open to the static path
+    # and template path. If they go away (from some kind of clean up) while
+    # the app is still running, we won't be able to serve the status page.
+    # Bad!
+    #
+    # TODO: when implementing #24, these FDs will need to be cleaned up
+    open_fds = []
+    open_fds.append(os.open(static_path, os.O_DIRECTORY|os.O_RDONLY))
+    open_fds.append(os.open(template_path, os.O_DIRECTORY|os.O_RDONLY))
+
     JSONHandler.zygote_master = zygote_master
     app = tornado.web.Application([('/', HTMLHandler),
                                    ('/json', JSONHandler),
@@ -82,4 +92,4 @@ def get_httpserver(io_loop, port, zygote_master, zygote_base=None):
     app.settings['worker_sockname'] = zygote_master.sock.getsockname()
     http_server = tornado.httpserver.HTTPServer(app, io_loop=io_loop, no_keep_alive=True)
     http_server.listen(port)
-    return http_server
+    return open_fds, http_server

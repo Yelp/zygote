@@ -69,7 +69,7 @@ class ZygoteMaster(object):
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGQUIT):
             signal.signal(sig, self.stop)
 
-        zygote.handlers.get_httpserver(self.io_loop, control_port, self, zygote_base=zygote_base)
+        self.open_fds, self.status_http_server = zygote.handlers.get_httpserver(self.io_loop, control_port, self, zygote_base=zygote_base)
 
     def reap_child(self, signum, frame):
         """Signal handler for SIGCHLD. Reaps children and updates
