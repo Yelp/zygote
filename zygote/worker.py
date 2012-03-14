@@ -9,7 +9,7 @@ import time
 
 from ._httpserver import HTTPServer
 
-from .util import setproctitle, AFUnixSender, ZygoteIOLoop, safe_kill, wait_for_pids
+from .util import setproctitle, AFUnixSender, ZygoteIOLoop, safe_kill, wait_for_pids, set_nonblocking
 from .message import Message, MessageCreateWorker, MessageWorkerStart, MessageWorkerExit, MessageWorkerExitInitFail, MessageHTTPEnd, MessageHTTPBegin, MessageShutDown
 
 # Exit with this exit code when there was a failure to init the worker
@@ -107,7 +107,7 @@ class ZygoteWorker(object):
 
         establish_signal_handlers(self.log)
 
-        self.io_loop._set_nonblocking(self.control_socket)
+        set_nonblocking(self.control_socket)
         self.io_loop.add_handler(self.control_socket.fileno(), self.handle_control, self.io_loop.READ)
 
         self.notify_socket = AFUnixSender(self.io_loop)
