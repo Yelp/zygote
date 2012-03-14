@@ -1,6 +1,7 @@
 from __future__ import with_statement
 
 import errno
+import fcntl
 import logging
 import os
 import resource
@@ -31,6 +32,9 @@ def is_eintr(exc):
         return exc.args[0] == errno.EINTR
     return False
 
+def set_nonblocking(fd):
+    flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+    fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
 def get_meminfo(pid=None):
     """Get the memory statistics for the current process. Values are returned
@@ -149,7 +153,7 @@ class AFUnixSender(object):
             self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
         else:
             self.socket = sock
-        self.io_loop._set_nonblocking(self.socket)
+        set_nonblocking(self.socket)
         self.log = logger or log
 
         self.connected = False # is the socket connected>
