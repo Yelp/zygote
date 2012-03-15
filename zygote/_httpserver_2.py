@@ -1,5 +1,15 @@
 #!/usr/bin/env python
 #
+###### THIS IS A MODIFIED VERSION OF TORNADO'S HTTPSERVER FROM TORNADO 2.2 #######
+#
+# It has been modified to support a callback after headers finish, and
+# another callback on close.
+#
+# These changes will most likely need to be ported to a new version if you
+# ever want to upgrade tornado.
+##################################################################################
+#
+#
 # Copyright 2009 Facebook
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may
