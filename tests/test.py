@@ -20,7 +20,7 @@ class ZygoteTest(TestCase):
 
     __test__ = False
 
-    USE_DEVNULL = False
+    USE_DEVNULL = True
 
     basedir = './example'
     control_port = None

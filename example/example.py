@@ -9,7 +9,6 @@ log.debug('started up')
 class StatusHandler(tornado.web.RequestHandler):
 
     def get(self):
-        time.sleep(0.5) # to make this easier to see in the process manager
         self.content_type = 'text/plain'
         self.write('uptime: %1.3f\n' % (time.time() - start_time))
 
