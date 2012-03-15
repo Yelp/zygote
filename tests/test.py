@@ -14,13 +14,13 @@ from tornado.httpclient import HTTPRequest, HTTPClient
 from testify import *
 
 num_re = re.compile(r'\d+$')
-stat_re = re.compile(r'^\d+ \(.*\) [A-Z] (\d+) \d+ \d+ \d+ -?\d+ \d+ \d+ (\d+) \d+ \d+.*')
+stat_re = re.compile(r'^(?P<pid>\d+) \((?P<exename>[^)]+)\) (?P<state>[A-Z]) (?P<ppid>\d+) (?P<pgid>\d+) (?P<sid>\d+) (?P<tty_nr>\d+) (?P<tpgid>-?\d+) (?P<flags>\d+) \d+ (\d+) \d+ \d+.*')
 
 class ZygoteTest(TestCase):
 
     __test__ = False
 
-    USE_DEVNULL = True
+    USE_DEVNULL = False
 
     basedir = './example'
     control_port = None
@@ -101,11 +101,12 @@ class ZygoteTest(TestCase):
             except IOError:
                 continue
             try:
-                m = stat_re.match(data).groups()
-                ppid = int(m[0])
+                m = stat_re.match(data)
+                ppid = int(m.group('ppid'))
             except AttributeError:
-                print repr(data)
-                sys.exit(1)
+                print >>sys.stderr, "Error reading /proc/%d/stat: %s" % (pid, data)
+                raise
+            pid_map.setdefault(pid, [])
             pid_map.setdefault(ppid, []).append(pid)
         return pid_map
 

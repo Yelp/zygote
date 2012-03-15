@@ -13,6 +13,9 @@ class StatusHandler(tornado.web.RequestHandler):
         self.content_type = 'text/plain'
         self.write('uptime: %1.3f\n' % (time.time() - start_time))
 
-def get_application():
+def initialize(*args, **kwargs):
+    pass
+
+def get_application(*args, **kwargs):
     log.debug('creating application for \'example\'')
     return tornado.web.Application([('/', StatusHandler)], debug=False)

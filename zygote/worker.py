@@ -7,7 +7,12 @@ import socket
 import sys
 import time
 
-from ._httpserver import HTTPServer
+import tornado
+
+if tornado.version_info >= (2,1,0):
+    from ._httpserver_2 import HTTPServer
+else:
+    from ._httpserver import HTTPServer
 
 from .util import setproctitle, AFUnixSender, ZygoteIOLoop, safe_kill, wait_for_pids, set_nonblocking
 from .message import Message, MessageCreateWorker, MessageWorkerStart, MessageWorkerExit, MessageWorkerExitInitFail, MessageHTTPEnd, MessageHTTPBegin, MessageShutDown
@@ -183,7 +188,7 @@ class ZygoteWorker(object):
                 self._initialize_worker(time_created)
                 self.log.debug("Worker initialized")
             except Exception, e:
-                self.log.error("Error initializing worker process: %s", e)
+                self.log.exception("Error initializing worker process: %s", e)
                 sys.exit(WORKER_INIT_FAILURE_EXIT_CODE)
             self.log.debug("Looks okay to me, smooth sailing!")
 
@@ -212,10 +217,10 @@ class ZygoteWorker(object):
         sock.connect('\0zygote_%d' % self.ppid)
 
         establish_signal_handlers(log)
-        def on_line(line):
+        def on_headers(line, headers):
             log.debug('sending MessageHTTPBegin')
             notify(sock, MessageHTTPBegin, line)
-        def on_close():
+        def on_close(disconnected=False):
             log.debug('sending MessageHTTPEnd')
             notify(sock, MessageHTTPEnd)
 
@@ -227,14 +232,20 @@ class ZygoteWorker(object):
             # io_loop instance should NOT use io_loop.start() because start()
             # is invoked by the corresponding zygote worker. 
             kwargs = {'io_loop': io_loop}
+            log.debug("Invoking get_application")
             app = self.get_application(*self.args, **kwargs)
         except Exception:
             log.error("Unable to get application")
             raise
         #http_server = tornado.httpserver.HTTPServer(app, io_loop=io_loop, no_keep_alive=True)
         # TODO: make keep-alive servers work
-        http_server = HTTPServer(app, io_loop=io_loop, no_keep_alive=True, close_callback=on_close, headers_callback=on_line)
-        http_server._socket = self.sock
-        io_loop.add_handler(self.sock.fileno(), http_server._handle_events, io_loop.READ)
+        log.debug("Creating HTTPServer")
+        http_server = HTTPServer(app, io_loop=io_loop, no_keep_alive=True, close_callback=on_close, headers_callback=on_headers)
+        if tornado.version_info >= (2,1,0):
+            http_server.add_socket(self.sock)
+        else:
+            http_server._socket = self.sock
+            io_loop.add_handler(self.sock.fileno(), http_server._handle_events, io_loop.READ)
+        log.debug("Started ioloop...")
         io_loop.start()
 
