@@ -9,7 +9,7 @@ import time
 import os
 
 import tornado.simple_httpclient
-from tornado.httpclient import HTTPRequest, HTTPClient
+from tornado.httpclient import HTTPRequest, HTTPClient, HTTPError
 
 from testify import *
 
@@ -25,10 +25,14 @@ class ZygoteTest(TestCase):
     basedir = './example'
     control_port = None
     port = None
+    protocol = 'http'
     num_workers = 4
+    extra_proc_args = []
 
-    def get_url(self, path):
-        req = HTTPRequest('http://localhost:%d%s' % (self.port, path))
+    def get_url(self, path, protocol=None):
+        protocol = protocol or self.protocol
+        ca_cert_path = os.path.join(self.basedir, 'certs', 'ca.cert')
+        req = HTTPRequest('%s://localhost:%d%s' % (protocol, self.port, path), validate_cert=True, ca_certs=ca_cert_path)
         try:
             response = self.http_client.fetch(req)
         except socket.error, e:
@@ -75,13 +79,20 @@ class ZygoteTest(TestCase):
             kw['stdout'] = sys.stdout
             kw['stderr'] = sys.stderr
 
-        self.proc = subprocess.Popen(['python', 'zygote/main.py',
-                                          '-d',
-                                          '-b', self.basedir,
-                                          '-p', str(self.port),
-                                          '--control-port', str(self.control_port),
-                                          '--num-workers', str(self.num_workers),
-                                          '-m', 'example'], **kw)
+
+        proc_args = ['python', 'zygote/main.py',
+                '-d',
+                '-b', self.basedir,
+                '-p', str(self.port),
+                '--control-port', str(self.control_port),
+                '--num-workers', str(self.num_workers),
+                '-m', 'example',
+        ]
+
+        if self.extra_proc_args:
+            proc_args += self.extra_proc_args
+
+        self.proc = subprocess.Popen(proc_args, **kw)
 
     @setup
     def sanity_check_process(self):
@@ -212,6 +223,22 @@ class ZygoteTests(ZygoteTest):
         process_tree = self.get_process_tree()
         final_zygote = self.get_zygote(process_tree)
         assert_not_equal(initial_zygote, final_zygote)
+
+
+class SecureZygoteTests(ZygoteTest):
+    protocol = 'https'
+    extra_proc_args = ['--cert', 'certs/server.cert', '--key', 'certs/server.key']
+
+    def test_https_get(self):
+        for x in xrange(self.num_workers + 1):
+            resp = self.get_url('/')
+            self.check_response(resp)
+            assert resp.body.startswith('uptime: ')
+
+    def test_http_get(self):
+        for x in xrange(self.num_workers + 1):
+            assert_raises(HTTPError, self.get_url, '/', protocol='http')
+
 
 if __name__ == '__main__':
     main()

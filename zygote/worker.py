@@ -65,8 +65,9 @@ class ZygoteWorker(object):
     # how many seconds to wait before sending SIGKILL to children
     WAIT_FOR_KILL_TIME = 10.0
 
-    def __init__(self, sock, basepath, module, args):
+    def __init__(self, sock, basepath, module, args, ssl_options=None):
         self.args = args
+        self.ssl_options = ssl_options
         self.ppid = os.getppid()
 
         # Set up the control socket nice and early
@@ -230,17 +231,22 @@ class ZygoteWorker(object):
             # io_loop is passed into get_application for program to add handler
             # or schedule task on the main io_loop.  Program that uses this
             # io_loop instance should NOT use io_loop.start() because start()
-            # is invoked by the corresponding zygote worker. 
+            # is invoked by the corresponding zygote worker.
             kwargs = {'io_loop': io_loop}
             log.debug("Invoking get_application")
             app = self.get_application(*self.args, **kwargs)
         except Exception:
             log.error("Unable to get application")
             raise
-        #http_server = tornado.httpserver.HTTPServer(app, io_loop=io_loop, no_keep_alive=True)
         # TODO: make keep-alive servers work
         log.debug("Creating HTTPServer")
-        http_server = HTTPServer(app, io_loop=io_loop, no_keep_alive=True, close_callback=on_close, headers_callback=on_headers)
+        http_server = HTTPServer(app,
+                io_loop=io_loop,
+                no_keep_alive=True,
+                close_callback=on_close,
+                headers_callback=on_headers,
+                ssl_options=self.ssl_options
+        )
         if tornado.version_info >= (2,1,0):
             http_server.add_socket(self.sock)
         else:

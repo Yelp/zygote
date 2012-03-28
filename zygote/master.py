@@ -25,6 +25,12 @@ else:
 
 log = logging.getLogger('zygote.master')
 
+try:
+    import ssl # Python 2.6+
+except ImportError:
+    ssl = None
+
+
 class ZygoteMaster(object):
 
     instantiated = False
@@ -37,7 +43,18 @@ class ZygoteMaster(object):
     # how many seconds to wait before sending SIGKILL to children
     WAIT_FOR_KILL_TIME = 10.0
 
-    def __init__(self, sock, basepath, module, num_workers, control_port, application_args=[], max_requests=None, zygote_base=None):
+    def __init__(self,
+                sock,
+                basepath,
+                module,
+                num_workers,
+                control_port,
+                application_args=None,
+                max_requests=None,
+                zygote_base=None,
+                ssl_options=None,
+        ):
+
         if self.__class__.instantiated:
             log.error('cannot instantiate zygote master more than once')
             sys.exit(1)
@@ -45,9 +62,10 @@ class ZygoteMaster(object):
         self.stopped = False
         self.started_transition = None
 
-        self.application_args = application_args
+        self.application_args = application_args or []
         self.io_loop = ZygoteIOLoop(log_name='zygote.master.ioloop')
         self.sock = sock
+        self.ssl_options = ssl_options
         self.basepath = basepath
         self.module = module
         self.num_workers = num_workers
@@ -69,7 +87,13 @@ class ZygoteMaster(object):
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGQUIT):
             signal.signal(sig, self.stop)
 
-        self.open_fds, self.status_http_server = zygote.handlers.get_httpserver(self.io_loop, control_port, self, zygote_base=zygote_base)
+        self.open_fds, self.status_http_server = zygote.handlers.get_httpserver(
+                self.io_loop,
+                control_port,
+                self,
+                zygote_base=zygote_base,
+                ssl_options=self.ssl_options,
+        )
 
     def reap_child(self, signum, frame):
         """Signal handler for SIGCHLD. Reaps children and updates
@@ -263,7 +287,13 @@ class ZygoteMaster(object):
             # Make the zygote a process group leader
             os.setpgid(os.getpid(), os.getpid())
             # create the zygote
-            z = ZygoteWorker(self.sock, realbase, self.module, self.application_args)
+            z = ZygoteWorker(
+                    sock=self.sock,
+                    basepath=realbase,
+                    module=self.module,
+                    args=self.application_args,
+                    ssl_options=self.ssl_options,
+            )
             z.loop()
 
     def start(self):
@@ -316,6 +346,27 @@ def main(opts, extra_args):
     sock.setblocking(0)
     sock.bind((opts.interface, opts.port))
     sock.listen(128)
-    master = ZygoteMaster(sock, opts.basepath, opts.module, opts.num_workers, opts.control_port, extra_args, opts.max_requests, opts.zygote_base)
+
+    ssl_options=None
+    if opts.cert:
+        ssl_options = dict(certfile=opts.cert, keyfile=opts.key)
+        log.info('using SSL with %s', ssl_options)
+
+        sock = ssl.wrap_socket(sock,
+                server_side=True,
+                do_handshake_on_connect=False,
+                **ssl_options
+        )
+
+    master = ZygoteMaster(sock,
+            basepath=opts.basepath,
+            module=opts.module,
+            num_workers=opts.num_workers,
+            control_port=opts.control_port,
+            application_args=extra_args,
+            max_requests=opts.max_requests,
+            zygote_base=opts.zygote_base,
+            ssl_options=ssl_options,
+    )
     atexit.register(master.stop)
     master.start()
