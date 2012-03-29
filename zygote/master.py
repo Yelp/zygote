@@ -349,7 +349,12 @@ def main(opts, extra_args):
 
     ssl_options=None
     if opts.cert:
-        ssl_options = dict(certfile=opts.cert, keyfile=opts.key)
+        ssl_options = dict(
+                certfile=opts.cert,
+                keyfile=opts.key,
+                ca_certs=opts.cacerts,
+                cert_reqs=ssl.CERT_OPTIONAL if opts.cacerts else ssl.CERT_NONE,
+        )
         log.info('using SSL with %s', ssl_options)
 
         sock = ssl.wrap_socket(sock,
