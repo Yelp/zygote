@@ -64,7 +64,7 @@ class JSONHandler(RequestHandler):
         self.set_header('Content-Type', 'application/json')
         self.write(json.dumps(env, cls=JSONEncoder, indent=2))
 
-def get_httpserver(io_loop, port, zygote_master, zygote_base=None):
+def get_httpserver(io_loop, port, zygote_master, zygote_base=None, ssl_options=None):
     if zygote_base is not None:
         static_path = os.path.realpath(os.path.join(zygote_base, 'static'))
         template_path = os.path.realpath(os.path.join(zygote_base, 'templates'))
@@ -90,6 +90,10 @@ def get_httpserver(io_loop, port, zygote_master, zygote_base=None):
                                   static_path=static_path,
                                   template_path=template_path)
     app.settings['worker_sockname'] = zygote_master.sock.getsockname()
-    http_server = tornado.httpserver.HTTPServer(app, io_loop=io_loop, no_keep_alive=True)
+    http_server = tornado.httpserver.HTTPServer(app,
+            io_loop=io_loop,
+            no_keep_alive=True,
+            ssl_options=ssl_options,
+    )
     http_server.listen(port)
     return open_fds, http_server
