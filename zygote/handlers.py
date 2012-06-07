@@ -12,6 +12,7 @@ import zygote.util
 
 try:
     import simplejson as json
+    json = json
 except ImportError:
     import json
 

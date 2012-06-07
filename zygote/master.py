@@ -27,6 +27,7 @@ log = logging.getLogger('zygote.master')
 
 try:
     import ssl # Python 2.6+
+    ssl = ssl
 except ImportError:
     ssl = None
 
@@ -53,6 +54,7 @@ class ZygoteMaster(object):
                 max_requests=None,
                 zygote_base=None,
                 ssl_options=None,
+                expect_proxy=False,
         ):
 
         if self.__class__.instantiated:
@@ -69,6 +71,7 @@ class ZygoteMaster(object):
         self.basepath = basepath
         self.module = module
         self.num_workers = num_workers
+        self.expect_proxy = expect_proxy
         self.max_requests = max_requests
         self.time_created = datetime.datetime.now()
 
@@ -293,6 +296,7 @@ class ZygoteMaster(object):
                     module=self.module,
                     args=self.application_args,
                     ssl_options=self.ssl_options,
+                    expect_proxy=self.expect_proxy,
             )
             z.loop()
 
@@ -372,6 +376,7 @@ def main(opts, extra_args):
             max_requests=opts.max_requests,
             zygote_base=opts.zygote_base,
             ssl_options=ssl_options,
+            expect_proxy=opts.expect_proxy,
     )
     atexit.register(master.stop)
     master.start()

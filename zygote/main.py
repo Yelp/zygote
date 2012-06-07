@@ -36,6 +36,7 @@ def main():
     parser.add_option('--cert', default=None, help='Certificate to use for HTTPS traffic')
     parser.add_option('--key', default=None, help='Private key for HTTPS traffic')
     parser.add_option('--cacerts', default=None, help='File containing a list of root certificates')
+    parser.add_option('--expect-proxy', default=False, action='store_true', help='Expect the PROXY protocol')
     opts, args = parser.parse_args()
 
     if not opts.basepath:
@@ -46,6 +47,9 @@ def main():
         sys.exit(1)
     if not opts.module:
         parser.error('You must specify a module argument using -m')
+        sys.exit(1)
+    if opts.expect_proxy and (opts.cert or opts.key or opts.cacerts):
+        parser.error('Cannot use PROXY and built-in SSL at the same time')
         sys.exit(1)
 
     zygote.master.main(opts, args)

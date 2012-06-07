@@ -51,6 +51,7 @@ from tornado.util import b, bytes_type
 
 try:
     import ssl  # Python 2.6+
+    ssl = ssl
 except ImportError:
     ssl = None
 

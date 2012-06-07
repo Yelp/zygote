@@ -8,11 +8,8 @@ import sys
 import time
 
 import tornado
-
-if tornado.version_info >= (2,1,0):
-    from ._httpserver_2 import HTTPServer
-else:
-    from ._httpserver import HTTPServer
+from ._httpserver import HTTPServer
+from .tornado_proxy import ProxyWrappedHTTPServer
 
 from .util import setproctitle, AFUnixSender, ZygoteIOLoop, safe_kill, wait_for_pids, set_nonblocking
 from .message import Message, MessageCreateWorker, MessageWorkerStart, MessageWorkerExit, MessageWorkerExitInitFail, MessageHTTPEnd, MessageHTTPBegin, MessageShutDown
@@ -65,9 +62,10 @@ class ZygoteWorker(object):
     # how many seconds to wait before sending SIGKILL to children
     WAIT_FOR_KILL_TIME = 10.0
 
-    def __init__(self, sock, basepath, module, args, ssl_options=None):
+    def __init__(self, sock, basepath, module, args, ssl_options=None, expect_proxy=False):
         self.args = args
         self.ssl_options = ssl_options
+        self.expect_proxy = expect_proxy
         self.ppid = os.getppid()
 
         # Set up the control socket nice and early
@@ -240,7 +238,11 @@ class ZygoteWorker(object):
             raise
         # TODO: make keep-alive servers work
         log.debug("Creating HTTPServer")
-        http_server = HTTPServer(app,
+        if self.expect_proxy:
+            server = ProxyWrappedHTTPServer
+        else:
+            server = HTTPServer
+        http_server = server(app,
                 io_loop=io_loop,
                 no_keep_alive=True,
                 close_callback=on_close,
