@@ -91,7 +91,7 @@ class _ProxyWrappedHTTPServerTornadoTwo(HTTPServer):
     def handle_stream(self, stream, _):
         stream.read_until("\r\n", functools.partial(_get_proxy, after=lambda address: HTTPConnection(stream,
             address, self.request_callback, self.no_keep_alive,
-            self.xheaders, close_callback=self._close_callback, header_callback=self._headers_callback), io_loop=self.io_loop))
+            self.xheaders, close_callback=self._close_callback, headers_callback=self._headers_callback), io_loop=self.io_loop))
 
 
 if tornado.version_info < (2, 0, 0):
