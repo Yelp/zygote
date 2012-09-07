@@ -2,6 +2,7 @@ from __future__ import with_statement
 
 import errno
 import fcntl
+import functools
 import logging
 import os
 import resource
@@ -265,12 +266,11 @@ class ZygoteIOLoop(tornado.ioloop.IOLoop):
         self.log.exception("Error in callback %s", callback)
 
     def add_handler(self, fd, handler, events):
-        "Add a handler to the IOLoop, with exception handling"""
+        """Add a handler to the IOLoop, with exception handling"""
+        @functools.wraps(handler)
         def wrapped_handler(*args, **kwargs):
             try:
                 handler(*args, **kwargs)
             except Exception:
                 self.handle_callback_exception(handler)
-        wrapped_handler.__doc__ = handler.__doc__
-        wrapped_handler.__name__ = handler.__name__
         return super(ZygoteIOLoop, self).add_handler(fd, wrapped_handler, events)
