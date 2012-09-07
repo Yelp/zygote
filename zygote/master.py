@@ -80,7 +80,7 @@ class ZygoteMaster(object):
         log.debug("binding to domain socket")
         self.domain_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
         self.domain_socket.bind('\0zygote_%d' % os.getpid())
-        self.io_loop.add_handler(self.domain_socket.fileno(), self.recv_protol_msg, self.io_loop.READ)
+        self.io_loop.add_handler(self.domain_socket.fileno(), self.recv_protocol_msg, self.io_loop.READ)
 
         signal.signal(signal.SIGCHLD, self.reap_child)
         signal.signal(signal.SIGHUP, self.update_revision)
@@ -173,7 +173,7 @@ class ZygoteMaster(object):
     def really_stop(self, status=0):
         sys.exit(status)
 
-    def recv_protol_msg(self, fd, events):
+    def recv_protocol_msg(self, fd, events):
         """Callback for messages received on the domain_socket"""
         assert fd == self.domain_socket.fileno()
         data = self.domain_socket.recv(self.RECV_SIZE)
