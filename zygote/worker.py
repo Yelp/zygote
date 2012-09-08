@@ -82,7 +82,7 @@ class ZygoteWorker(object):
         try:
             self._real_init(sock, basepath, module, args)
         except Exception:
-            self.log.exception("Error performing initializtion of %s", self)
+            self.log.exception("Error performing initialization of %s", self)
             sys.exit(INIT_FAILURE_EXIT_CODE)
 
     def _real_init(self, sock, basepath, module, args):
