@@ -9,6 +9,7 @@ import socket
 import sys
 import time
 
+import tornado.ioloop
 import zygote.handlers
 
 from .util import safe_kill, close_fds, setproctitle, ZygoteIOLoop, wait_for_pids
@@ -43,6 +44,13 @@ class ZygoteMaster(object):
     # how many seconds to wait before sending SIGKILL to children
     WAIT_FOR_KILL_TIME = 10.0
 
+    # how many seconds shall we wait
+    RESPAWN_CHECK_INTERVAL = 1.0
+
+    # number of tries before giving up re-spawning a child well use
+    # this limit in each RESPAWN_CHECK_INTERVAL
+    NUM_RESPAWN_LIMIT = 3
+
     def __init__(self,
                 sock,
                 basepath,
@@ -75,6 +83,12 @@ class ZygoteMaster(object):
         self.current_zygote = None
         self.zygote_collection = accounting.ZygoteCollection()
 
+        self.zygote_respawn_count = 0
+        self.stop_respawning_zygotes = False
+
+        self.canary_update = False
+        self.canary_zygote = None
+
         # create an abstract unix domain socket. this socket will be used to
         # receive messages from zygotes and their children
         log.debug("binding to domain socket")
@@ -94,6 +108,19 @@ class ZygoteMaster(object):
                 zygote_base=zygote_base,
                 ssl_options=self.ssl_options,
         )
+
+        self.zygote_respawn_watchdog = tornado.ioloop.PeriodicCallback(
+            	self.watch_zygote_respawn,
+                self.RESPAWN_CHECK_INTERVAL * 1000,
+                self.io_loop
+        )
+        self.zygote_respawn_watchdog.start()
+
+    def watch_zygote_respawn(self):
+        if self.zygote_respawn_count >= self.NUM_RESPAWN_LIMIT:
+            log.error("Respawn count limit reached. Too many failures!")
+            self.stop_respawning_zygotes = True
+        self.zygote_respawn_count = 0
 
     def reap_child(self, signum, frame):
         """Signal handler for SIGCHLD. Reaps children and updates
@@ -129,8 +156,9 @@ class ZygoteMaster(object):
                 self.really_stop()
                 return
 
-            if not self.stopped:
+            if not self.stopped and not self.stop_respawning_zygotes:
                 if pid == self.current_zygote.pid:
+                    self.zygote_respawn_count += 1
                     self.current_zygote = self.create_zygote()
 
                 # we may need to create new workers for the current zygote... this
@@ -261,6 +289,7 @@ class ZygoteMaster(object):
         """The SIGHUP handler, calls create_zygote and possibly initiates the
         transition of idle workers.
         """
+        self.stop_respawning_zygotes = False
         self.create_zygote()
 
     def create_zygote(self):
