@@ -80,7 +80,7 @@ class Zygote(object):
     """
     __generation = 0
 
-    def __init__(self, pid, basepath, io_loop):
+    def __init__(self, pid, basepath, io_loop, canary=False):
         self.basepath = basepath
         self.pid = pid
         self.worker_map = {}
@@ -91,6 +91,7 @@ class Zygote(object):
         self.connected = False
         self.send_queue = []
         self.write_queue_active = False
+        self._canary = canary
 
         # wait until the control_socket can be connected, since it might take a
         # moment before the forked child creates their socket. a better way to
@@ -103,6 +104,14 @@ class Zygote(object):
 
         self.generation = self.__class__.__generation
         self.__class__.__generation += 1
+
+    @property
+    def canary(self):
+        return self._canary
+
+    @canary.setter
+    def canary(self, value):
+        self._canary = value
 
     def update_meminfo(self):
         for k, v in meminfo_fmt(self.pid).iteritems():
@@ -178,8 +187,8 @@ class ZygoteCollection(object):
     def __init__(self):
         self.zygote_map = {}
 
-    def add_zygote(self, pid, basepath, io_loop):
-        z = Zygote(pid, basepath, io_loop)
+    def add_zygote(self, pid, basepath, io_loop, canary=False):
+        z = Zygote(pid, basepath, io_loop, canary)
         self.zygote_map[pid] = z
         return z
 
