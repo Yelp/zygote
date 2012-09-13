@@ -73,6 +73,7 @@ class ZygoteMaster(object):
         self.max_requests = max_requests
         self.time_created = datetime.datetime.now()
 
+        self.prev_zygote = None
         self.current_zygote = None
         self.zygote_collection = accounting.ZygoteCollection()
 
@@ -127,6 +128,8 @@ class ZygoteMaster(object):
 
             if status_code == INIT_FAILURE_EXIT_CODE:
                 if pid == self.current_zygote.pid and self.current_zygote.canary:
+                    if self.prev_zygote:
+                        self.curent_zygote = self.prev_zygote
                     log.error("Could not initialize canary worker. Giving up trying to respawn")
                 else:
                     log.error("Could not initialize zygote worker, giving up")
@@ -134,15 +137,21 @@ class ZygoteMaster(object):
                 return
 
             if not self.stopped:
+                active_zygote = self.current_zygote
+
                 if pid == self.current_zygote.pid:
                     self.current_zygote = self.create_zygote()
+                    active_zygote = self.current_zygote
+                elif self.prev_zygote and pid == self.prev_zygote.pid:
+                    self.prev_zygote = self.create_zygote()
+                    active_zygote = self.prev_zygote
 
-                # we may need to create new workers for the current zygote... this
+                # we may need to create new workers for the active zygote... this
                 # is a bit racy, although that seems to be pretty unlikely in
                 # practice
                 workers_needed = self.num_workers - self.zygote_collection.worker_count()
                 for x in xrange(workers_needed):
-                    self.current_zygote.request_spawn()
+                    active_zygote.request_spawn()
 
             elif len(self.zygote_collection.zygote_map.values()) == 0:
                 self.really_stop()
@@ -189,9 +198,14 @@ class ZygoteMaster(object):
             log.info("Canary zygote initialized. Transitioning idle workers.")
             # This is not the canary zygote anymore
             self.current_zygote.canary = False
+            # We can also release the handle on the previous
+            # zygote. It is already in the zygote_collection for
+            # accounting purposses, but we won't need to keep track of
+            # it anymore.
+            self.prev_zygote = None
             # Canary initialization was successful, we can now transition workers
             self.io_loop.add_callback(self.transition_idle_workers)
-        if msg_type is message.MessageWorkerStart:
+        elif msg_type is message.MessageWorkerStart:
             # a new worker was spawned by one of our zygotes; add it to
             # zygote_collection, and note the time created and the zygote parent
             self.zygote_collection[msg.worker_ppid].add_worker(msg.pid, msg.time_created)
@@ -271,8 +285,12 @@ class ZygoteMaster(object):
     def update_revision(self, signum=None, frame=None):
         """The SIGHUP handler, calls create_zygote and possibly initiates the
         transition of idle workers.
+
+        This preserves the current zygote and initializes a "canary"
+        zygote as the current one.
         """
-        self.create_zygote(canary=True)
+        self.prev_zygote = self.current_zygote
+        self.current_zygote = self.create_zygote(canary=True)
 
     def create_zygote(self, canary=False):
         """"Create a new zygote"""
@@ -282,9 +300,9 @@ class ZygoteMaster(object):
         pid = os.fork()
         if pid:
             log.info('started zygote %d pointed at base %r', pid, realbase)
-            self.current_zygote = self.zygote_collection.add_zygote(pid, realbase, self.io_loop, canary)
+            z = self.zygote_collection.add_zygote(pid, realbase, self.io_loop, canary)
             if not canary: self.io_loop.add_callback(self.transition_idle_workers)
-            return self.current_zygote
+            return z
         else:
             # Try to clean up some of the file descriptors and whatnot that
             # exist in the parent before continuing. Strictly speaking, this
@@ -308,9 +326,9 @@ class ZygoteMaster(object):
             z.loop()
 
     def start(self):
-        z = self.create_zygote()
+        self.current_zygote = self.create_zygote()
         for x in xrange(self.num_workers):
-            z.request_spawn()
+            self.current_zygote.request_spawn()
         self.io_loop.start()
 
 def main(opts, extra_args):
