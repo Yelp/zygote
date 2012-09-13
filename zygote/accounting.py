@@ -81,6 +81,13 @@ class Zygote(object):
     __generation = 0
 
     def __init__(self, pid, basepath, io_loop, canary=False):
+        """Initialize using real Zygote's pid, basepath and master's
+        io_loop.
+
+        Master also marks the zygote as 'canary' at initialization if
+        it's an update to a newer revision of the source. Only if the
+        canary is live, master continues on transition workers.
+        """
         self.basepath = basepath
         self.pid = pid
         self.worker_map = {}
