@@ -300,8 +300,9 @@ class ZygoteMaster(object):
         pid = os.fork()
         if pid:
             log.info('started zygote %d pointed at base %r', pid, realbase)
-            z = self.zygote_collection.add_zygote(pid, realbase, self.io_loop, canary)
-            if not canary: self.io_loop.add_callback(self.transition_idle_workers)
+            z = self.zygote_collection.add_zygote(pid, realbase, self.io_loop, canary=canary)
+            if not canary:
+                self.io_loop.add_callback(self.transition_idle_workers)
             return z
         else:
             # Try to clean up some of the file descriptors and whatnot that

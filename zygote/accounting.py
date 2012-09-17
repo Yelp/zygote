@@ -187,7 +187,7 @@ class ZygoteCollection(object):
         self.zygote_map = {}
 
     def add_zygote(self, pid, basepath, io_loop, canary=False):
-        z = Zygote(pid, basepath, io_loop, canary)
+        z = Zygote(pid, basepath, io_loop, canary=canary)
         self.zygote_map[pid] = z
         return z
 
