@@ -9,6 +9,7 @@ import socket
 import sys
 import time
 
+import tornado.ioloop
 import zygote.handlers
 
 from .util import safe_kill, close_fds, setproctitle, ZygoteIOLoop, wait_for_pids
@@ -72,6 +73,7 @@ class ZygoteMaster(object):
         self.max_requests = max_requests
         self.time_created = datetime.datetime.now()
 
+        self.prev_zygote = None
         self.current_zygote = None
         self.zygote_collection = accounting.ZygoteCollection()
 
@@ -80,7 +82,7 @@ class ZygoteMaster(object):
         log.debug("binding to domain socket")
         self.domain_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
         self.domain_socket.bind('\0zygote_%d' % os.getpid())
-        self.io_loop.add_handler(self.domain_socket.fileno(), self.recv_protol_msg, self.io_loop.READ)
+        self.io_loop.add_handler(self.domain_socket.fileno(), self.recv_protocol_msg, self.io_loop.READ)
 
         signal.signal(signal.SIGCHLD, self.reap_child)
         signal.signal(signal.SIGHUP, self.update_revision)
@@ -125,20 +127,31 @@ class ZygoteMaster(object):
                 pass
 
             if status_code == INIT_FAILURE_EXIT_CODE:
-                log.error("Could not initialize zygote worker, giving up")
-                self.really_stop()
+                if pid == self.current_zygote.pid and self.current_zygote.canary:
+                    if self.prev_zygote:
+                        self.curent_zygote = self.prev_zygote
+                    log.error("Could not initialize canary worker. Giving up trying to respawn")
+                else:
+                    log.error("Could not initialize zygote worker, giving up")
+                    self.really_stop()
                 return
 
             if not self.stopped:
+                active_zygote = self.current_zygote
+
                 if pid == self.current_zygote.pid:
                     self.current_zygote = self.create_zygote()
+                    active_zygote = self.current_zygote
+                elif self.prev_zygote and pid == self.prev_zygote.pid:
+                    self.prev_zygote = self.create_zygote()
+                    active_zygote = self.prev_zygote
 
-                # we may need to create new workers for the current zygote... this
+                # we may need to create new workers for the active zygote... this
                 # is a bit racy, although that seems to be pretty unlikely in
                 # practice
                 workers_needed = self.num_workers - self.zygote_collection.worker_count()
                 for x in xrange(workers_needed):
-                    self.current_zygote.request_spawn()
+                    active_zygote.request_spawn()
 
             elif len(self.zygote_collection.zygote_map.values()) == 0:
                 self.really_stop()
@@ -173,7 +186,7 @@ class ZygoteMaster(object):
     def really_stop(self, status=0):
         sys.exit(status)
 
-    def recv_protol_msg(self, fd, events):
+    def recv_protocol_msg(self, fd, events):
         """Callback for messages received on the domain_socket"""
         assert fd == self.domain_socket.fileno()
         data = self.domain_socket.recv(self.RECV_SIZE)
@@ -181,14 +194,26 @@ class ZygoteMaster(object):
         msg_type = type(msg)
         log.debug('received message of type %s from pid %d', msg_type.__name__, msg.pid)
 
-        if msg_type is message.MessageWorkerStart:
+        if msg_type is message.MessageCanaryInit:
+            log.info("Canary zygote initialized. Transitioning idle workers.")
+            # This is not the canary zygote anymore
+            self.current_zygote.canary = False
+            # We can also release the handle on the previous
+            # zygote. It is already in the zygote_collection for
+            # accounting purposses, but we won't need to keep track of
+            # it anymore.
+            self.prev_zygote = None
+            # Canary initialization was successful, we can now transition workers
+            self.io_loop.add_callback(self.transition_idle_workers)
+        elif msg_type is message.MessageWorkerStart:
             # a new worker was spawned by one of our zygotes; add it to
             # zygote_collection, and note the time created and the zygote parent
             self.zygote_collection[msg.worker_ppid].add_worker(msg.pid, msg.time_created)
         elif msg_type is message.MessageWorkerExitInitFail:
-            log.error("A worker initialization failed, giving up")
-            self.stop()
-            return
+            if not self.current_zygote.canary:
+                log.error("A worker initialization failed, giving up")
+                self.stop()
+                return
         elif msg_type is message.MessageWorkerExit:
             # a worker exited. tell the current/active zygote to spawn a new
             # child. if this was the last child of a different (non-current)
@@ -260,10 +285,14 @@ class ZygoteMaster(object):
     def update_revision(self, signum=None, frame=None):
         """The SIGHUP handler, calls create_zygote and possibly initiates the
         transition of idle workers.
-        """
-        self.create_zygote()
 
-    def create_zygote(self):
+        This preserves the current zygote and initializes a "canary"
+        zygote as the current one.
+        """
+        self.prev_zygote = self.current_zygote
+        self.current_zygote = self.create_zygote(canary=True)
+
+    def create_zygote(self, canary=False):
         """"Create a new zygote"""
         # read the basepath symlink
         realbase = os.path.realpath(self.basepath)
@@ -271,9 +300,9 @@ class ZygoteMaster(object):
         pid = os.fork()
         if pid:
             log.info('started zygote %d pointed at base %r', pid, realbase)
-            z = self.zygote_collection.add_zygote(pid, realbase, self.io_loop)
-            self.current_zygote = z
-            self.io_loop.add_callback(self.transition_idle_workers)
+            z = self.zygote_collection.add_zygote(pid, realbase, self.io_loop, canary=canary)
+            if not canary:
+                self.io_loop.add_callback(self.transition_idle_workers)
             return z
         else:
             # Try to clean up some of the file descriptors and whatnot that
@@ -293,13 +322,14 @@ class ZygoteMaster(object):
                     module=self.module,
                     args=self.application_args,
                     ssl_options=self.ssl_options,
+                    canary=canary
             )
             z.loop()
 
     def start(self):
-        z = self.create_zygote()
+        self.current_zygote = self.create_zygote()
         for x in xrange(self.num_workers):
-            z.request_spawn()
+            self.current_zygote.request_spawn()
         self.io_loop.start()
 
 def main(opts, extra_args):

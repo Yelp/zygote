@@ -2,15 +2,17 @@ import os
 
 class Message(object):
 
-    CREATE_WORKER  = 'C'
-    SHUT_DOWN      = 'K'
+    CANARY_INIT           = 'I'
 
-    WORKER_START   = 'S'
-    WORKER_EXIT    = 'X'
+    CREATE_WORKER         = 'C'
+    SHUT_DOWN             = 'K'
+
+    WORKER_START          = 'S'
+    WORKER_EXIT           = 'X'
     WORKER_EXIT_INIT_FAIL = 'Y'
 
-    HTTP_BEGIN     = 'B'
-    HTTP_END       = 'E'
+    HTTP_BEGIN            = 'B'
+    HTTP_END              = 'E'
 
     @classmethod
     def emit(cls, body):
@@ -22,6 +24,8 @@ class Message(object):
         pid = int(pid)
         if type == cls.CREATE_WORKER:
             return MessageCreateWorker(pid, body)
+        elif type == cls.CANARY_INIT:
+            return MessageCanaryInit(pid, body)
         elif type == cls.WORKER_START:
             return MessageWorkerStart(pid, body)
         elif type == cls.WORKER_EXIT:
@@ -39,6 +43,14 @@ class Message(object):
 
     def __init__(self, pid):
         self.pid = int(pid)
+
+class MessageCanaryInit(Message):
+
+    msg_type = Message.CANARY_INIT
+
+    def __init__(self, pid, body):
+        assert body == ''
+        super(MessageCanaryInit, self).__init__(pid)
 
 class MessageCreateWorker(Message):
 

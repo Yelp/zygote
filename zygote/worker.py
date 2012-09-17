@@ -15,7 +15,7 @@ else:
     from ._httpserver import HTTPServer
 
 from .util import setproctitle, AFUnixSender, ZygoteIOLoop, safe_kill, wait_for_pids, set_nonblocking
-from .message import Message, MessageCreateWorker, MessageWorkerStart, MessageWorkerExit, MessageWorkerExitInitFail, MessageHTTPEnd, MessageHTTPBegin, MessageShutDown
+import message
 
 # Exit with this exit code when there was a failure to init the worker
 # (which might be hard to represent otherwise if it, for example, occurs
@@ -65,10 +65,13 @@ class ZygoteWorker(object):
     # how many seconds to wait before sending SIGKILL to children
     WAIT_FOR_KILL_TIME = 10.0
 
-    def __init__(self, sock, basepath, module, args, ssl_options=None):
+    def __init__(self, sock, basepath, module, args, ssl_options=None, canary=False):
         self.args = args
         self.ssl_options = ssl_options
         self.ppid = os.getppid()
+        self.canary = canary
+
+        establish_signal_handlers(self.log)
 
         # Set up the control socket nice and early
         try:
@@ -82,7 +85,7 @@ class ZygoteWorker(object):
         try:
             self._real_init(sock, basepath, module, args)
         except Exception:
-            self.log.exception("Error performing initializtion of %s", self)
+            self.log.exception("Error performing initialization of %s", self)
             sys.exit(INIT_FAILURE_EXIT_CODE)
 
     def _real_init(self, sock, basepath, module, args):
@@ -111,8 +114,6 @@ class ZygoteWorker(object):
 
         self.get_application = t.get_application
 
-        establish_signal_handlers(self.log)
-
         set_nonblocking(self.control_socket)
         self.io_loop.add_handler(self.control_socket.fileno(), self.handle_control, self.io_loop.READ)
 
@@ -126,15 +127,20 @@ class ZygoteWorker(object):
             self.log.info('initializing zygote')
             t.initialize(*self.args)
 
+        if self.canary:
+            notify(self.notify_socket, message.MessageCanaryInit)
+            # Initialization is successful. This is not the canary zygote anymore.
+            self.canary = False
+
         self.log.info('new zygote started')
 
     def handle_control(self, fd, events):
         assert fd == self.control_socket.fileno()
         data = self.control_socket.recv(self.RECV_SIZE)
-        msg = Message.parse(data)
-        if type(msg) is MessageCreateWorker:
+        msg = message.Message.parse(data)
+        if type(msg) is message.MessageCreateWorker:
             self.spawn_worker()
-        elif type(msg) is MessageShutDown:
+        elif type(msg) is message.MessageShutDown:
             self.kill_workers(msg.pids)
         else:
             assert False
@@ -173,9 +179,9 @@ class ZygoteWorker(object):
             status_code = os.WEXITSTATUS(status)
             self.log.info('reaped worker %d, status %d', pid, status_code)
             if status_code == WORKER_INIT_FAILURE_EXIT_CODE:
-                notify(self.notify_socket, MessageWorkerExitInitFail, '%d %d' % (pid, status_code))
+                notify(self.notify_socket, message.MessageWorkerExitInitFail, '%d %d' % (pid, status_code))
             else:
-                notify(self.notify_socket, MessageWorkerExit, '%d %d' % (pid, status_code))
+                notify(self.notify_socket, message.MessageWorkerExit, '%d %d' % (pid, status_code))
 
     def loop(self):
         self.io_loop.start()
@@ -220,12 +226,12 @@ class ZygoteWorker(object):
         establish_signal_handlers(log)
         def on_headers(line, headers):
             log.debug('sending MessageHTTPBegin')
-            notify(sock, MessageHTTPBegin, line)
+            notify(sock, message.MessageHTTPBegin, line)
         def on_close(disconnected=False):
             log.debug('sending MessageHTTPEnd')
-            notify(sock, MessageHTTPEnd)
+            notify(sock, message.MessageHTTPEnd)
 
-        notify(sock, MessageWorkerStart, '%d %d' % (int(time_created * 1e6), os.getppid()))
+        notify(sock, message.MessageWorkerStart, '%d %d' % (int(time_created * 1e6), os.getppid()))
         setproctitle('zygote-worker version=%s' % self.version)
         try:
             # io_loop is passed into get_application for program to add handler
