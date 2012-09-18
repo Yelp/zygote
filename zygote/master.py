@@ -230,12 +230,14 @@ class ZygoteMaster(object):
                 if zygote.worker_count == 0:
                     os.kill(zygote.pid, signal.SIGQUIT)
             else:
-                self.current_zygote.request_spawn()
-                if zygote != self.current_zygote and zygote.worker_count == 0:
-                    log.info('killing zygote')
-                    # not the current zygote, and no children left; kill it
-                    # left, kill it; shouldn't need to safe_kill here
-                    os.kill(zygote.pid, signal.SIGQUIT)
+                if zygote == self.current_zygote:
+                    self.current_zygote.request_spawn()
+                else:
+                    if zygote.worker_count == 0:
+                        log.info('killing zygote')
+                        # not the current zygote, and no children left; kill it
+                        # left, kill it; shouldn't need to safe_kill here
+                        os.kill(zygote.pid, signal.SIGQUIT)
         elif msg_type is message.MessageHTTPBegin:
             # a worker started servicing an HTTP request
             worker = self.zygote_collection.get_worker(msg.pid)
