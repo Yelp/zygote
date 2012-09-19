@@ -232,7 +232,7 @@ class ZygoteMaster(object):
             else:
                 if zygote == self.current_zygote:
                     self.current_zygote.request_spawn()
-                elif zygote == self.prev_zygote:
+                elif self.current_zygote.canary and zygote == self.prev_zygote:
                     self.prev_zygote.request_spawn()
                 else:
                     # Not a zygote that we care about.
