@@ -223,21 +223,20 @@ class ZygoteMaster(object):
             log.debug('Removed worker from zygote %d, there are now %d left', msg.pid, len(zygote.workers()))
 
             if self.stopped:
-                # if we're in stopping mode, don't kill the zygote until all of
-                # its children have exited. this should not happen using the
-                # new shutdown logic, but it doesn't hurt to handle it
-                # anyway
-                if zygote.worker_count == 0:
-                    os.kill(zygote.pid, signal.SIGQUIT)
+                # if we're in stopping mode better kill the zygote
+                # too. self.kill_zygote will kill the zygote if it
+                # doesn't have any children. this should not happen
+                # using the new shutdown logic, but it doesn't hurt to
+                # handle it anyway
+                self.kill_zygote(zygote)
             else:
                 if zygote == self.current_zygote:
                     self.current_zygote.request_spawn()
+                elif zygote == self.prev_zygote:
+                    self.prev_zygote.request_spawn()
                 else:
-                    if zygote.worker_count == 0:
-                        log.info('killing zygote')
-                        # not the current zygote, and no children left; kill it
-                        # left, kill it; shouldn't need to safe_kill here
-                        os.kill(zygote.pid, signal.SIGQUIT)
+                    # Not a zygote that we care about.
+                    self.kill_zygote(zygote)
         elif msg_type is message.MessageHTTPBegin:
             # a worker started servicing an HTTP request
             worker = self.zygote_collection.get_worker(msg.pid)
@@ -283,6 +282,19 @@ class ZygoteMaster(object):
             self.io_loop.add_timeout(time.time() + self.POLL_INTERVAL, self.transition_idle_workers)
         else:
             self.started_transition = None
+
+        # Cleanup empty zygotes for the next iteration of the transition.
+        for z in self.zygote_collection.other_zygotes(self.current_zygote):
+            if z.worker_count == 0:
+                self.kill_zygote(z)
+
+    def kill_zygote(self, zygote):
+        """Send zygote SIGQUIT if it has zero workers. """
+        # The only valid time to kill a zygote is if it doesn't have
+        # any workers left.
+        if zygote.worker_count == 0:
+            log.info("killing zygote with pid %d" % zygote.pid)
+            os.kill(zygote.pid, signal.SIGQUIT)
 
     def update_revision(self, signum=None, frame=None):
         """The SIGHUP handler, calls create_zygote and possibly initiates the
