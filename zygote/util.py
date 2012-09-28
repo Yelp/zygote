@@ -267,10 +267,16 @@ class ZygoteIOLoop(tornado.ioloop.IOLoop):
 
     def add_handler(self, fd, handler, events):
         """Add a handler to the IOLoop, with exception handling"""
-        @functools.wraps(handler)
+
+        # Get the list of available attributes from the handler.
+        # A workaround for: http://bugs.python.org/issue3445
+        available_attrs = (a for a in functools.WRAPPER_ASSIGNMENTS if hasattr(handler, a))
+
+        @functools.wraps(handler, assigned=available_attrs)
         def wrapped_handler(*args, **kwargs):
             try:
                 handler(*args, **kwargs)
             except Exception:
                 self.handle_callback_exception(handler)
+
         return super(ZygoteIOLoop, self).add_handler(fd, wrapped_handler, events)
