@@ -6,6 +6,7 @@ import logging
 import os
 import signal
 import socket
+import struct
 import sys
 import time
 
@@ -49,37 +50,41 @@ class ZygoteMaster(object):
     # how many seconds to wait before sending SIGKILL to children
     WAIT_FOR_KILL_TIME = 10.0
 
-    def __init__(self,
-                sock,
-                basepath,
-                module,
-                num_workers,
-                control_port,
-                application_args=None,
-                max_requests=0,
-                zygote_base=None,
-                ssl_options=None,
-        ):
-
+    def __init__(
+        self,
+        sock,
+        basepath,
+        module,
+        num_workers,
+        control_port,
+        control_socket_path,
+        application_args=None,
+        max_requests=0,
+        zygote_base=None,
+        ssl_options=None,
+    ):
         if self.__class__.instantiated:
             log.error('cannot instantiate zygote master more than once')
             sys.exit(1)
         self.__class__.instantiated = True
-        self.stopped = False
-        self.started_transition = None
 
-        self.application_args = application_args or []
-        self.io_loop = ZygoteIOLoop(log_name='zygote.master.ioloop')
         self.sock = sock
-        self.ssl_options = ssl_options
         self.basepath = basepath
         self.module = module
         self.num_workers = num_workers
+        self.control_port = control_port
+        self.control_socket_path = control_socket_path
+        self.application_args = application_args or []
         self.max_requests = max_requests
-        self.time_created = datetime.datetime.now()
+        self.zygote_base = zygote_base
+        self.ssl_options = ssl_options
 
+        self.stopped = False
+        self.started_transition = None
         self.prev_zygote = None
         self.current_zygote = None
+        self.time_created = datetime.datetime.now()
+        self.io_loop = ZygoteIOLoop(log_name='zygote.master.ioloop')
         self.zygote_collection = accounting.ZygoteCollection()
 
         # create an abstract unix domain socket. this socket will be used to
@@ -89,6 +94,8 @@ class ZygoteMaster(object):
         self.domain_socket.bind('\0zygote_%d' % os.getpid())
         self.io_loop.add_handler(self.domain_socket.fileno(), self.recv_protocol_msg, self.io_loop.READ)
 
+        self.setup_control_socket()
+
         signal.signal(signal.SIGCHLD, self.reap_child)
         signal.signal(signal.SIGHUP, self.update_revision)
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGQUIT):
@@ -96,11 +103,51 @@ class ZygoteMaster(object):
 
         self.open_fds, self.status_http_server = handlers.get_httpserver(
                 self.io_loop,
-                control_port,
+                self.control_port,
                 self,
-                zygote_base=zygote_base,
+                zygote_base=self.zygote_base,
                 ssl_options=self.ssl_options,
         )
+
+    def setup_control_socket(self):
+        socket_path = self.control_socket_path
+        if os.path.exists(socket_path):
+            log.error("Control socket exitsts %s. Probably from a previous run. Removing..." % socket_path)
+            self.cleanup_control_socket()
+        self.control_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
+        self.control_socket.bind(socket_path)
+        self.io_loop.add_handler(self.control_socket.fileno(), self.handle_control_msg, self.io_loop.READ)
+
+    def cleanup_control_socket(self):
+        log.info("Removing %s" % self.control_socket_path)
+        os.unlink(self.control_socket_path)
+
+    def handle_control_msg(self, fd, events):
+        assert fd == self.control_socket.fileno()
+        data = self.control_socket.recv(self.RECV_SIZE)
+        msg = message.ControlMessage.parse(data)
+        msg_type = type(msg)
+
+        # NOTE: We can possibly use SO_PEERCRED on control socket to
+        # get more information about the client.
+        log.info('received message of type %s', msg_type.__name__,)
+
+        if msg_type is message.ControlMessageScaleWorkers:
+            self.scale_workers(msg.num_workers)
+
+    def scale_workers(self, num_workers):
+        prev_num_workers = self.num_workers
+        diff_num_workers = num_workers - self.num_workers
+        self.num_workers = num_workers
+        if not diff_num_workers:
+            return
+        elif diff_num_workers > 0:
+            log.info('Reducing number of workers from %d to %d.', prev_num_workers, num_workers)
+            for _ in range(diff_num_workers):
+                self.current_zygote.request_spawn()
+        else:
+            log.info('Increasing number of workers from %d to %d.', prev_num_workers, num_workers)
+            self.current_zygote.request_kill_workers(-diff_num_workers)
 
     def reap_child(self, signum, frame):
         """Signal handler for SIGCHLD. Reaps children and updates
@@ -195,6 +242,7 @@ class ZygoteMaster(object):
         self.really_stop(0)
 
     def really_stop(self, status=0):
+        self.cleanup_control_socket()
         sys.exit(status)
 
     def recv_protocol_msg(self, fd, events):
@@ -243,10 +291,9 @@ class ZygoteMaster(object):
                 log.debug('Removed a worker from zygote %d, %d left', msg.pid, len(zygote.workers()))
 
             if not self.stopped:
-                if zygote == self.current_zygote:
-                    self.current_zygote.request_spawn()
-                elif self.current_zygote.canary and zygote == self.prev_zygote:
-                    self.prev_zygote.request_spawn()
+                if zygote in (self.current_zygote, self.prev_zygote):
+                    if self.num_workers > zygote.worker_count:
+                        zygote.request_spawn()
                 else:
                     # Not a zygote that we care about. Request shutdown.
                     zygote.request_shut_down()
@@ -426,15 +473,17 @@ def main(opts, extra_args):
                 **ssl_options
         )
 
-    master = ZygoteMaster(sock,
-            basepath=opts.basepath,
-            module=opts.module,
-            num_workers=opts.num_workers,
-            control_port=opts.control_port,
-            application_args=extra_args,
-            max_requests=opts.max_requests,
-            zygote_base=opts.zygote_base,
-            ssl_options=ssl_options,
+    master = ZygoteMaster(
+        sock,
+        basepath=opts.basepath,
+        module=opts.module,
+        num_workers=opts.num_workers,
+        control_port=opts.control_port,
+        control_socket_path=opts.control_socket_path,
+        application_args=extra_args,
+        max_requests=opts.max_requests,
+        zygote_base=opts.zygote_base,
+        ssl_options=ssl_options,
     )
     atexit.register(master.stop)
     master.start()

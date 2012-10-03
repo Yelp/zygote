@@ -36,6 +36,13 @@ def main():
     parser.add_option('--cert', default=None, help='Certificate to use for HTTPS traffic')
     parser.add_option('--key', default=None, help='Private key for HTTPS traffic')
     parser.add_option('--cacerts', default=None, help='File containing a list of root certificates')
+    parser.add_option(
+        '--control-socket',
+        dest='control_socket_path',
+        default=os.path.join(os.getcwd(), "zygote_master.sock"),
+        help='The socket to control zygote master at run time'
+    )
+
     opts, args = parser.parse_args()
 
     if not opts.basepath:

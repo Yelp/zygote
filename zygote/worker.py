@@ -2,6 +2,7 @@ import atexit
 import errno
 import logging
 import os
+import random
 import signal
 import socket
 import sys
@@ -141,12 +142,27 @@ class ZygoteWorker(object):
         msg = message.Message.parse(data)
         if type(msg) is message.MessageCreateWorker:
             self.spawn_worker()
+        elif type(msg) is message.MessageKillWorkers:
+            self.kill_workers(msg.num_workers_to_kill)
         elif type(msg) is message.MessageShutDown:
-            self.kill_workers()
+            self.kill_all_workers()
         else:
             assert False
 
-    def kill_workers(self):
+    def kill_workers(self, num_workers_to_kill):
+        if num_workers_to_kill > len(self.children):
+            self.log.error(
+                'Request to kill %d workers out of %d current workers',
+                num_workers_to_kill,
+                len(self.children)
+            )
+            return
+        worker_pids = random.sample(self.children, num_workers_to_kill)
+        for pid in worker_pids:
+            safe_kill(pid)
+        wait_for_pids(worker_pids, self.WAIT_FOR_KILL_TIME, self.log)
+
+    def kill_all_workers(self):
         """Kill all workers and wait (synchronously) for them
         to exit"""
         # reset the signal handler so that we don't get interrupted

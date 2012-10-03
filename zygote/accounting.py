@@ -148,6 +148,10 @@ class Zygote(object):
         log.debug('requesting spawn on Zygote %d', self.generation)
         self.control_socket.send(message.MessageCreateWorker.emit(''))
 
+    def request_kill_workers(self, num_workers_to_kill):
+        """Instruct this zygote to kill an idle worker"""
+        self.control_socket.send(message.MessageKillWorkers.emit('%d' % num_workers_to_kill))
+
     def request_shut_down(self):
         """Instruct this zygote to shut down all workers"""
         self.control_socket.send(message.MessageShutDown.emit(""))
