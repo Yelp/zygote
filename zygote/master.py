@@ -173,14 +173,20 @@ class ZygoteMaster(object):
             log.debug('requesting shutdown on %d', zygote.pid)
             zygote.request_shut_down()
 
-        # now we have to wait until all of the workers actually exit... at that
-        # point self.really_stop() will be called
         log.debug('setting self.stopped')
         self.stopped = True
+
+        log.debug('master is stopping. will not try to update anymore.')
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
+
+        log.debug('stopping io_loop.')
         if getattr(self, 'io_loop', None) is not None:
             self.io_loop.stop()
+
+        log.info('waiting for workers to exit before stoping master.')
         wait_for_pids(pids, self.WAIT_FOR_KILL_TIME, log, kill_pgroup=True)
         log.info('all zygotes exited; good night')
+
         self.really_stop(0)
 
     def really_stop(self, status=0):
