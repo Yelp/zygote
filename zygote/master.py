@@ -56,7 +56,7 @@ class ZygoteMaster(object):
                 num_workers,
                 control_port,
                 application_args=None,
-                max_requests=None,
+                max_requests=0,
                 zygote_base=None,
                 ssl_options=None,
         ):
@@ -220,7 +220,7 @@ class ZygoteMaster(object):
             # a new worker was spawned by one of our zygotes; add it to
             # zygote_collection, and note the time created and the zygote parent
             zygote = self.zygote_collection[msg.worker_ppid]
-            if zygote and not zygote.shutting_down:
+            if zygote:
                 zygote.add_worker(msg.pid, msg.time_created)
         elif msg_type is message.MessageWorkerExitInitFail:
             if not self.current_zygote.canary:
@@ -231,13 +231,16 @@ class ZygoteMaster(object):
             # a worker exited. tell the current/active zygote to spawn a new
             # child. if this was the last child of a different (non-current)
             # zygote, kill that zygote
-            try:
-                zygote = self.zygote_collection[msg.pid]
-            except:
-                print "msg.pid", msg.pid
-                print self.zygote_collection.zygote_map
+            zygote = self.zygote_collection[msg.pid]
+            if not zygote:
+                return
+
             zygote.remove_worker(msg.child_pid)
-            log.debug('Removed worker from zygote %d, there are now %d left', msg.pid, len(zygote.workers()))
+            if zygote.shutting_down:
+                log.debug('Removed a worker from shutting down zygote %d, %d left', msg.pid, len(zygote.workers()))
+                return
+            else:
+                log.debug('Removed a worker from zygote %d, %d left', msg.pid, len(zygote.workers()))
 
             if not self.stopped:
                 if zygote == self.current_zygote:
@@ -257,7 +260,7 @@ class ZygoteMaster(object):
             worker = self.zygote_collection.get_worker(msg.pid)
             if worker:
                 worker.end_request()
-                if self.max_requests is not None and worker.request_count >= self.max_requests:
+                if self.max_requests and worker.request_count >= self.max_requests:
                     log.info('child %d reached max_requests %d, killing it', worker.pid, self.max_requests)
                     safe_kill(worker.pid, signal.SIGQUIT)
         else:
