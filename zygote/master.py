@@ -15,7 +15,6 @@ from zygote import accounting
 from zygote import handlers
 from zygote import message
 from zygote.util import close_fds
-from zygote.util import is_pid_alive
 from zygote.util import safe_kill
 from zygote.util import setproctitle
 from zygote.util import wait_for_pids
@@ -258,9 +257,9 @@ class ZygoteMaster(object):
             worker = self.zygote_collection.get_worker(msg.pid)
             if worker:
                 worker.end_request()
-                if self.max_requests is not None and worker.request_count >= self.max_requests and is_pid_alive(worker.pid):
+                if self.max_requests is not None and worker.request_count >= self.max_requests:
                     log.info('child %d reached max_requests %d, killing it', worker.pid, self.max_requests)
-                    os.kill(worker.pid, signal.SIGQUIT)
+                    safe_kill(worker.pid, signal.SIGQUIT)
         else:
             log.warning('master got unexpected message of type %s', msg_type)
 
@@ -311,11 +310,7 @@ class ZygoteMaster(object):
         # any workers left.
         if zygote.worker_count == 0:
             log.info("killing zygote with pid %d" % zygote.pid)
-            try:
-                os.kill(zygote.pid, sig)
-            except OSError, e:
-                if is_pid_alive(zygote.pid):
-                    raise e
+            safe_kill(zygote.pid, sig)
 
     def update_revision(self, signum=None, frame=None):
         """The SIGHUP handler, calls create_zygote and possibly initiates the
