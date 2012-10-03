@@ -10,12 +10,17 @@ import sys
 import time
 
 import tornado.ioloop
-import zygote.handlers
 
-from .util import safe_kill, close_fds, setproctitle, ZygoteIOLoop, wait_for_pids
-from zygote import message
 from zygote import accounting
-from zygote.worker import ZygoteWorker, INIT_FAILURE_EXIT_CODE
+from zygote import handlers
+from zygote import message
+from zygote.util import close_fds
+from zygote.util import safe_kill
+from zygote.util import setproctitle
+from zygote.util import wait_for_pids
+from zygote.util import ZygoteIOLoop
+from zygote.worker import INIT_FAILURE_EXIT_CODE
+from zygote.worker import ZygoteWorker
 
 if hasattr(logging, 'NullHandler'):
     NullHandler = logging.NullHandler
@@ -51,7 +56,7 @@ class ZygoteMaster(object):
                 num_workers,
                 control_port,
                 application_args=None,
-                max_requests=None,
+                max_requests=0,
                 zygote_base=None,
                 ssl_options=None,
         ):
@@ -89,7 +94,7 @@ class ZygoteMaster(object):
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGQUIT):
             signal.signal(sig, self.stop)
 
-        self.open_fds, self.status_http_server = zygote.handlers.get_httpserver(
+        self.open_fds, self.status_http_server = handlers.get_httpserver(
                 self.io_loop,
                 control_port,
                 self,
@@ -214,7 +219,9 @@ class ZygoteMaster(object):
         elif msg_type is message.MessageWorkerStart:
             # a new worker was spawned by one of our zygotes; add it to
             # zygote_collection, and note the time created and the zygote parent
-            self.zygote_collection[msg.worker_ppid].add_worker(msg.pid, msg.time_created)
+            zygote = self.zygote_collection[msg.worker_ppid]
+            if zygote:
+                zygote.add_worker(msg.pid, msg.time_created)
         elif msg_type is message.MessageWorkerExitInitFail:
             if not self.current_zygote.canary:
                 log.error("A worker initialization failed, giving up")
@@ -225,35 +232,37 @@ class ZygoteMaster(object):
             # child. if this was the last child of a different (non-current)
             # zygote, kill that zygote
             zygote = self.zygote_collection[msg.pid]
-            zygote.remove_worker(msg.child_pid)
-            log.debug('Removed worker from zygote %d, there are now %d left', msg.pid, len(zygote.workers()))
+            if not zygote:
+                return
 
-            if self.stopped:
-                # if we're in stopping mode better kill the zygote
-                # too. self.kill_zygote will kill the zygote if it
-                # doesn't have any children. this should not happen
-                # using the new shutdown logic, but it doesn't hurt to
-                # handle it anyway
-                self.kill_zygote(zygote)
+            zygote.remove_worker(msg.child_pid)
+            if zygote.shutting_down:
+                log.debug('Removed a worker from shutting down zygote %d, %d left', msg.pid, len(zygote.workers()))
+                return
             else:
+                log.debug('Removed a worker from zygote %d, %d left', msg.pid, len(zygote.workers()))
+
+            if not self.stopped:
                 if zygote == self.current_zygote:
                     self.current_zygote.request_spawn()
                 elif self.current_zygote.canary and zygote == self.prev_zygote:
                     self.prev_zygote.request_spawn()
                 else:
-                    # Not a zygote that we care about.
-                    self.kill_zygote(zygote)
+                    # Not a zygote that we care about. Request shutdown.
+                    zygote.request_shut_down()
         elif msg_type is message.MessageHTTPBegin:
             # a worker started servicing an HTTP request
             worker = self.zygote_collection.get_worker(msg.pid)
-            worker.start_request(msg.remote_ip, msg.http_line)
+            if worker:
+                worker.start_request(msg.remote_ip, msg.http_line)
         elif msg_type is message.MessageHTTPEnd:
             # a worker finished servicing an HTTP request
             worker = self.zygote_collection.get_worker(msg.pid)
-            worker.end_request()
-            if self.max_requests is not None and worker.request_count >= self.max_requests:
-                log.info('child %d reached max_requests %d, killing it', worker.pid, self.max_requests)
-                os.kill(worker.pid, signal.SIGQUIT)
+            if worker:
+                worker.end_request()
+                if self.max_requests and worker.request_count >= self.max_requests:
+                    log.info('Worker %d reached max_requests %d, killing it', worker.pid, self.max_requests)
+                    safe_kill(worker.pid, signal.SIGQUIT)
         else:
             log.warning('master got unexpected message of type %s', msg_type)
 
@@ -268,10 +277,14 @@ class ZygoteMaster(object):
             sig = signal.SIGKILL
         else:
             sig = signal.SIGQUIT
-        other_zygote_count = 0
+
+        other_zygotes = set(self.zygote_collection.other_zygotes(self.current_zygote))
+        if self.current_zygote.canary and self.prev_zygote:
+            other_zygotes &= set(self.zygote_collection.other_zygotes(self.prev_zygote))
+
         kill_count = 0
-        for z in self.zygote_collection.other_zygotes(self.current_zygote):
-            other_zygote_count += 1
+        other_zygote_count = len(other_zygotes)
+        for z in other_zygotes:
             for worker in z.idle_workers():
                 log.debug("killing worker %d with signal %d", worker.pid, sig)
                 if safe_kill(worker.pid, sig):
@@ -290,17 +303,17 @@ class ZygoteMaster(object):
             self.started_transition = None
 
         # Cleanup empty zygotes for the next iteration of the transition.
-        for z in self.zygote_collection.other_zygotes(self.current_zygote):
+        for z in other_zygotes:
             if z.worker_count == 0:
-                self.kill_zygote(z)
+                self.kill_empty_zygote(z, sig)
 
-    def kill_zygote(self, zygote):
+    def kill_empty_zygote(self, zygote, sig=signal.SIGQUIT):
         """Send zygote SIGQUIT if it has zero workers. """
         # The only valid time to kill a zygote is if it doesn't have
         # any workers left.
         if zygote.worker_count == 0:
             log.info("killing zygote with pid %d" % zygote.pid)
-            os.kill(zygote.pid, signal.SIGQUIT)
+            safe_kill(zygote.pid, sig)
 
     def update_revision(self, signum=None, frame=None):
         """The SIGHUP handler, calls create_zygote and possibly initiates the

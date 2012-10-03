@@ -150,19 +150,7 @@ class Zygote(object):
 
     def request_shut_down(self):
         """Instruct this zygote to shut down all workers"""
-        # How this works:
-        #
-        # We need to be able to wait on all of the children shutting down,
-        # and send them a SIGKILL if they decide to be petulant and ignore
-        # the SIGTERM. Since the zygote is what receives the SIGCHLD (or can
-        # do the wait() or whatever), we need to pass the PIDs through to
-        # it. We do that over the unix domain socket for now.
-        #
-        # This might break horribly if you have too many pids to fit in a
-        # single message over the domain socket. Mea culpa.
-
-        # TODO: find a less-janky to manage these pids
-        self.control_socket.send(message.MessageShutDown.emit(' '.join(str(p) for p in self.worker_map.keys())))
+        self.control_socket.send(message.MessageShutDown.emit(""))
         self.shutting_down = True
 
     @property
@@ -212,7 +200,7 @@ class ZygoteCollection(object):
         return None
 
     def __getitem__(self, pid):
-        return self.zygote_map[pid]
+        return self.zygote_map.get(pid, None)
 
     def __iter__(self):
         return self.zygote_map.itervalues()
