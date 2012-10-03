@@ -114,4 +114,4 @@ class MessageShutDown(Message):
 
     def __init__(self, pid, body):
         super(MessageShutDown, self).__init__(pid)
-        self.pids = [int(p) for p in body.split(' ') if p]
+        assert body == '' # just ignore the body, it should be empty

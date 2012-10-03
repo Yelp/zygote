@@ -138,6 +138,17 @@ def wait_for_pids(pids, timeout, log, kill_pgroup=False):
         for pid in pids:
             safe_kill(pid, signal.SIGKILL, kill_pgroup)
 
+def is_pid_alive(pid):
+    """Sends null signal to a process to check if it's alive"""
+    try:
+        os.kill(pid, 0)
+    except OSError, e:
+        # Access denied, but process is alive
+        return e.errno == errno.EPERM
+    except:
+        return False
+    else:
+        return True
 
 class AFUnixSender(object):
     """Sender abstraction for an AF_UNIX socket (using the SOCK_DGRAM
