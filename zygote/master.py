@@ -261,7 +261,7 @@ class ZygoteMaster(object):
             if worker:
                 worker.end_request()
                 if self.max_requests and worker.request_count >= self.max_requests:
-                    log.info('child %d reached max_requests %d, killing it', worker.pid, self.max_requests)
+                    log.info('Worker %d reached max_requests %d, killing it', worker.pid, self.max_requests)
                     safe_kill(worker.pid, signal.SIGQUIT)
         else:
             log.warning('master got unexpected message of type %s', msg_type)
