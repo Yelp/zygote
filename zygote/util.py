@@ -102,6 +102,18 @@ def close_fds(*exclude):
                 else:
                     raise
 
+def is_pid_alive(pid):
+    """Sends null signal to a process to check if it's alive"""
+    try:
+        os.kill(pid, 0)
+    except OSError, e:
+        # Access denied, but process is alive
+        return e.errno == errno.EPERM
+    except:
+        return False
+    else:
+        return True
+
 def safe_kill(pid, sig=signal.SIGUSR1, process_group=False):
     try:
         log.debug('killing %d', pid)
@@ -110,7 +122,9 @@ def safe_kill(pid, sig=signal.SIGUSR1, process_group=False):
         else:
             os.kill(pid, sig)
     except OSError, e:
-        log.debug('failed to safe_kill pid %d because of %r' % (pid, e))
+        # Process may have died before we send the signal
+        if is_pid_alive(pid):
+            log.warning('failed to safe_kill pid %d because of %r' % (pid, e))
         return False
     return True
 
@@ -137,7 +151,6 @@ def wait_for_pids(pids, timeout, log, kill_pgroup=False):
         log.warning("PIDs [%s] didn't quit after %f seconds, sending SIGKILL", ",".join(str(p) for p in pids), timeout)
         for pid in pids:
             safe_kill(pid, signal.SIGKILL, kill_pgroup)
-
 
 class AFUnixSender(object):
     """Sender abstraction for an AF_UNIX socket (using the SOCK_DGRAM

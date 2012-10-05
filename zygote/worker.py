@@ -70,6 +70,7 @@ class ZygoteWorker(object):
         self.ssl_options = ssl_options
         self.ppid = os.getppid()
         self.canary = canary
+        self.children = set()
 
         establish_signal_handlers(self.log)
 
@@ -141,11 +142,11 @@ class ZygoteWorker(object):
         if type(msg) is message.MessageCreateWorker:
             self.spawn_worker()
         elif type(msg) is message.MessageShutDown:
-            self.kill_workers(msg.pids)
+            self.kill_workers()
         else:
             assert False
 
-    def kill_workers(self, pids):
+    def kill_workers(self):
         """Kill all workers and wait (synchronously) for them
         to exit"""
         # reset the signal handler so that we don't get interrupted
@@ -153,8 +154,8 @@ class ZygoteWorker(object):
         signal.signal(signal.SIGCHLD, signal.SIG_DFL)
         waiting_pids = set()
 
-        self.log.debug('zygote requesting kill on %d pids', len(pids))
-        for pid in pids:
+        self.log.debug('zygote requesting kill on %d pids', len(self.children))
+        for pid in self.children:
             if safe_kill(pid, signal.SIGQUIT):
                 waiting_pids.add(pid)
         wait_for_pids(waiting_pids, self.WAIT_FOR_KILL_TIME, self.log)
@@ -183,6 +184,8 @@ class ZygoteWorker(object):
             else:
                 notify(self.notify_socket, message.MessageWorkerExit, '%d %d' % (pid, status_code))
 
+            self.children.remove(pid)
+
     def loop(self):
         self.io_loop.start()
 
@@ -198,6 +201,8 @@ class ZygoteWorker(object):
                 self.log.exception("Error initializing worker process: %s", e)
                 sys.exit(WORKER_INIT_FAILURE_EXIT_CODE)
             self.log.debug("Looks okay to me, smooth sailing!")
+        else:
+            self.children.add(pid)
 
     def _initialize_worker(self, time_created):
         # We're the child. We need to close the write_pipe in order for the
