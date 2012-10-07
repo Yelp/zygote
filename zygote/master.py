@@ -87,13 +87,7 @@ class ZygoteMaster(object):
         self.io_loop = ZygoteIOLoop(log_name='zygote.master.ioloop')
         self.zygote_collection = accounting.ZygoteCollection()
 
-        # create an abstract unix domain socket. this socket will be used to
-        # receive messages from zygotes and their children
-        log.debug("binding to domain socket")
-        self.domain_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
-        self.domain_socket.bind('\0zygote_%d' % os.getpid())
-        self.io_loop.add_handler(self.domain_socket.fileno(), self.recv_protocol_msg, self.io_loop.READ)
-
+        self.setup_master_socket()
         self.setup_control_socket()
 
         signal.signal(signal.SIGCHLD, self.reap_child)
@@ -109,11 +103,22 @@ class ZygoteMaster(object):
                 ssl_options=self.ssl_options,
         )
 
+    def setup_master_socket(self):
+        """Create an abstract unix domain socket for master. This
+        socket will be used to receive messages from zygotes and their
+        children.
+        """
+        log.debug("Binding to master domain socket")
+        self.master_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
+        self.master_socket.bind('\0zygote_%d' % os.getpid())
+        self.io_loop.add_handler(self.master_socket.fileno(), self.handle_protocol_msg, self.io_loop.READ)
+
     def setup_control_socket(self):
         socket_path = self.control_socket_path
         if os.path.exists(socket_path):
-            log.error("Control socket exitsts %s. Probably from a previous run. Removing..." % socket_path)
+            log.error("Control socket exitsts %s. Probably from a previous run. Removing...", socket_path)
             self.cleanup_control_socket()
+        log.debug("Binding to control socket %s", socket_path)
         self.control_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
         self.control_socket.bind(socket_path)
         self.io_loop.add_handler(self.control_socket.fileno(), self.handle_control_msg, self.io_loop.READ)
@@ -135,6 +140,75 @@ class ZygoteMaster(object):
         if msg_type is message.ControlMessageScaleWorkers:
             self.scale_workers(msg.num_workers)
 
+    def handle_protocol_msg(self, fd, events):
+        """Callback for messages received on the master_socket"""
+        assert fd == self.master_socket.fileno()
+        data = self.master_socket.recv(self.RECV_SIZE)
+        msg = message.Message.parse(data)
+        msg_type = type(msg)
+        log.debug('received message of type %s from pid %d', msg_type.__name__, msg.pid)
+
+        if msg_type is message.MessageCanaryInit:
+            log.info("Canary zygote initialized. Transitioning idle workers.")
+            # This is not the canary zygote anymore
+            self.current_zygote.canary = False
+            # We can also release the handle on the previous
+            # zygote. It is already in the zygote_collection for
+            # accounting purposses, but we won't need to keep track of
+            # it anymore.
+            self.prev_zygote = None
+            # Canary initialization was successful, we can now transition workers
+            self.io_loop.add_callback(self.transition_idle_workers)
+        elif msg_type is message.MessageWorkerStart:
+            # a new worker was spawned by one of our zygotes; add it to
+            # zygote_collection, and note the time created and the zygote parent
+            zygote = self.zygote_collection[msg.worker_ppid]
+            if zygote:
+                zygote.add_worker(msg.pid, msg.time_created)
+        elif msg_type is message.MessageWorkerExitInitFail:
+            if not self.current_zygote.canary:
+                log.error("A worker initialization failed, giving up")
+                self.stop()
+                return
+        elif msg_type is message.MessageWorkerExit:
+            # a worker exited. tell the current/active zygote to spawn a new
+            # child. if this was the last child of a different (non-current)
+            # zygote, kill that zygote
+            zygote = self.zygote_collection[msg.pid]
+            if not zygote:
+                return
+
+            zygote.remove_worker(msg.child_pid)
+            if zygote.shutting_down:
+                log.debug('Removed a worker from shutting down zygote %d, %d left', msg.pid, len(zygote.workers()))
+                return
+            else:
+                log.debug('Removed a worker from zygote %d, %d left', msg.pid, len(zygote.workers()))
+
+            if not self.stopped:
+                if zygote in (self.current_zygote, self.prev_zygote):
+                    if self.num_workers > zygote.worker_count:
+                        zygote.request_spawn()
+                else:
+                    # Not a zygote that we care about. Request shutdown.
+                    zygote.request_shut_down()
+        elif msg_type is message.MessageHTTPBegin:
+            # a worker started servicing an HTTP request
+            worker = self.zygote_collection.get_worker(msg.pid)
+            if worker:
+                worker.start_request(msg.remote_ip, msg.http_line)
+        elif msg_type is message.MessageHTTPEnd:
+            # a worker finished servicing an HTTP request
+            worker = self.zygote_collection.get_worker(msg.pid)
+            if worker:
+                worker.end_request()
+                if self.max_requests and worker.request_count >= self.max_requests:
+                    log.info('Worker %d reached max_requests %d, killing it', worker.pid, self.max_requests)
+                    safe_kill(worker.pid, signal.SIGQUIT)
+        else:
+            log.warning('master got unexpected message of type %s', msg_type)
+
+
     def scale_workers(self, num_workers):
         prev_num_workers = self.num_workers
         diff_num_workers = num_workers - self.num_workers
@@ -142,11 +216,11 @@ class ZygoteMaster(object):
         if not diff_num_workers:
             return
         elif diff_num_workers > 0:
-            log.info('Reducing number of workers from %d to %d.', prev_num_workers, num_workers)
+            log.info('Increasing number of workers from %d to %d.', prev_num_workers, num_workers)
             for _ in range(diff_num_workers):
                 self.current_zygote.request_spawn()
         else:
-            log.info('Increasing number of workers from %d to %d.', prev_num_workers, num_workers)
+            log.info('Reducing number of workers from %d to %d.', prev_num_workers, num_workers)
             self.current_zygote.request_kill_workers(-diff_num_workers)
 
     def reap_child(self, signum, frame):
@@ -245,74 +319,6 @@ class ZygoteMaster(object):
         self.cleanup_control_socket()
         sys.exit(status)
 
-    def recv_protocol_msg(self, fd, events):
-        """Callback for messages received on the domain_socket"""
-        assert fd == self.domain_socket.fileno()
-        data = self.domain_socket.recv(self.RECV_SIZE)
-        msg = message.Message.parse(data)
-        msg_type = type(msg)
-        log.debug('received message of type %s from pid %d', msg_type.__name__, msg.pid)
-
-        if msg_type is message.MessageCanaryInit:
-            log.info("Canary zygote initialized. Transitioning idle workers.")
-            # This is not the canary zygote anymore
-            self.current_zygote.canary = False
-            # We can also release the handle on the previous
-            # zygote. It is already in the zygote_collection for
-            # accounting purposses, but we won't need to keep track of
-            # it anymore.
-            self.prev_zygote = None
-            # Canary initialization was successful, we can now transition workers
-            self.io_loop.add_callback(self.transition_idle_workers)
-        elif msg_type is message.MessageWorkerStart:
-            # a new worker was spawned by one of our zygotes; add it to
-            # zygote_collection, and note the time created and the zygote parent
-            zygote = self.zygote_collection[msg.worker_ppid]
-            if zygote:
-                zygote.add_worker(msg.pid, msg.time_created)
-        elif msg_type is message.MessageWorkerExitInitFail:
-            if not self.current_zygote.canary:
-                log.error("A worker initialization failed, giving up")
-                self.stop()
-                return
-        elif msg_type is message.MessageWorkerExit:
-            # a worker exited. tell the current/active zygote to spawn a new
-            # child. if this was the last child of a different (non-current)
-            # zygote, kill that zygote
-            zygote = self.zygote_collection[msg.pid]
-            if not zygote:
-                return
-
-            zygote.remove_worker(msg.child_pid)
-            if zygote.shutting_down:
-                log.debug('Removed a worker from shutting down zygote %d, %d left', msg.pid, len(zygote.workers()))
-                return
-            else:
-                log.debug('Removed a worker from zygote %d, %d left', msg.pid, len(zygote.workers()))
-
-            if not self.stopped:
-                if zygote in (self.current_zygote, self.prev_zygote):
-                    if self.num_workers > zygote.worker_count:
-                        zygote.request_spawn()
-                else:
-                    # Not a zygote that we care about. Request shutdown.
-                    zygote.request_shut_down()
-        elif msg_type is message.MessageHTTPBegin:
-            # a worker started servicing an HTTP request
-            worker = self.zygote_collection.get_worker(msg.pid)
-            if worker:
-                worker.start_request(msg.remote_ip, msg.http_line)
-        elif msg_type is message.MessageHTTPEnd:
-            # a worker finished servicing an HTTP request
-            worker = self.zygote_collection.get_worker(msg.pid)
-            if worker:
-                worker.end_request()
-                if self.max_requests and worker.request_count >= self.max_requests:
-                    log.info('Worker %d reached max_requests %d, killing it', worker.pid, self.max_requests)
-                    safe_kill(worker.pid, signal.SIGQUIT)
-        else:
-            log.warning('master got unexpected message of type %s', msg_type)
-
     def transition_idle_workers(self):
         """Transition idle HTTP workers from old zygotes to the current
         zygote.
@@ -341,7 +347,7 @@ class ZygoteMaster(object):
         if other_zygote_count:
             # The list of other zygotes was at least one, so we should
             # reschedule another call to transition_idle_workers. When a zygote
-            # runs out of worker children, the recv_protocol_msg function will
+            # runs out of worker children, the handle_protocol_msg function will
             # notice this fact when it receives the final MessageWorkerExit, and
             # at that time it will kill the worker, which is how this timeout
             # loop gets ended.
