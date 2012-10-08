@@ -204,6 +204,12 @@ class ZygoteCollection(object):
         return None
 
     def __getitem__(self, pid):
+        # ZygoteMaster requests a zygote using it's pid when it
+        # recieves a message from the zygote. In certain cases,
+        # ZygoteMaster can request a zygote that is already
+        # removed. This can happen if zygote dies and master handles
+        # the signal accordingly before reading the message from
+        # socket.
         return self.zygote_map.get(pid, None)
 
     def __iter__(self):
