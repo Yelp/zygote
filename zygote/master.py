@@ -331,9 +331,10 @@ class ZygoteMaster(object):
         else:
             sig = signal.SIGQUIT
 
-        other_zygotes = set(self.zygote_collection.other_zygotes(self.current_zygote))
+        other_zygotes = self.zygote_collection.other_zygotes(self.current_zygote)
         if self.current_zygote.canary and self.prev_zygote:
-            other_zygotes &= set(self.zygote_collection.other_zygotes(self.prev_zygote))
+            if self.prev_zygote in other_zygotes:
+                other_zygotes.remove(self.prev_zygote)
 
         kill_count = 0
         other_zygote_count = len(other_zygotes)

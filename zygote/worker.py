@@ -208,17 +208,17 @@ class ZygoteWorker(object):
     def spawn_worker(self):
         time_created = time.time()
         pid = os.fork()
-        if not pid:
-            try:
-                self.log.debug("Calling _initialize_worker")
-                self._initialize_worker(time_created)
-                self.log.debug("Worker initialized")
-            except Exception, e:
-                self.log.exception("Error initializing worker process: %s", e)
-                sys.exit(WORKER_INIT_FAILURE_EXIT_CODE)
-            self.log.debug("Looks okay to me, smooth sailing!")
-        else:
+        if pid:
             self.children.add(pid)
+            return
+        try:
+            self.log.debug("Calling _initialize_worker")
+            self._initialize_worker(time_created)
+            self.log.debug("Worker initialized")
+        except Exception, e:
+            self.log.exception("Error initializing worker process: %s", e)
+            sys.exit(WORKER_INIT_FAILURE_EXIT_CODE)
+        self.log.debug("Looks okay to me, smooth sailing!")
 
     def _initialize_worker(self, time_created):
         # We're the child. We need to close the write_pipe in order for the

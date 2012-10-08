@@ -106,13 +106,12 @@ def is_pid_alive(pid):
     """Sends null signal to a process to check if it's alive"""
     try:
         os.kill(pid, 0)
+        return True
     except OSError, e:
         # Access denied, but process is alive
         return e.errno == errno.EPERM
     except:
         return False
-    else:
-        return True
 
 def safe_kill(pid, sig=signal.SIGUSR1, process_group=False):
     try:
@@ -123,8 +122,9 @@ def safe_kill(pid, sig=signal.SIGUSR1, process_group=False):
             os.kill(pid, sig)
     except OSError, e:
         # Process may have died before we send the signal
-        if is_pid_alive(pid):
-            log.warning('failed to safe_kill pid %d because of %r' % (pid, e))
+        if not is_pid_alive(pid):
+            return True
+        log.warning('failed to safe_kill pid %d because of %r' % (pid, e))
         return False
     return True
 
