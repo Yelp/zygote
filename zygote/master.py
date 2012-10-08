@@ -340,8 +340,8 @@ class ZygoteMaster(object):
 
         kill_count = 0
         other_zygote_count = len(other_zygotes)
-        for z in other_zygotes:
-            for worker in z.idle_workers():
+        for zygote in other_zygotes:
+            for worker in zygote.idle_workers():
                 log.debug("killing worker %d with signal %d", worker.pid, sig)
                 if safe_kill(worker.pid, sig):
                     kill_count += 1
@@ -359,9 +359,9 @@ class ZygoteMaster(object):
             self.started_transition = None
 
         # Cleanup empty zygotes for the next iteration of the transition.
-        for z in other_zygotes:
-            if z.worker_count == 0:
-                self.kill_empty_zygote(z, sig)
+        for zygote in other_zygotes:
+            if zygote.worker_count == 0:
+                self.kill_empty_zygote(zygote, sig)
 
     def kill_empty_zygote(self, zygote, sig=signal.SIGQUIT):
         """Send zygote SIGQUIT if it has zero workers. """
