@@ -188,6 +188,8 @@ class ZygoteMaster(object):
             if not self.stopped:
                 if zygote in (self.current_zygote, self.prev_zygote):
                     if self.num_workers > zygote.worker_count:
+                        # Only start a new if we're below quota. This
+                        # is how we scale down the number of workers.
                         zygote.request_spawn()
                 else:
                     # Not a zygote that we care about. Request shutdown.
