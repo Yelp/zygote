@@ -59,7 +59,7 @@ class ZygoteMaster(object):
         control_port,
         control_socket_path,
         application_args=None,
-        max_requests=0,
+        max_requests=None,
         zygote_base=None,
         ssl_options=None,
     ):
@@ -202,7 +202,7 @@ class ZygoteMaster(object):
             worker = self.zygote_collection.get_worker(msg.pid)
             if worker:
                 worker.end_request()
-                if self.max_requests and worker.request_count >= self.max_requests:
+                if self.max_requests is not None and worker.request_count >= self.max_requests:
                     log.info('Worker %d reached max_requests %d, killing it', worker.pid, self.max_requests)
                     safe_kill(worker.pid, signal.SIGQUIT)
         else:
