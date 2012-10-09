@@ -116,6 +116,9 @@ class ZygoteMaster(object):
     def setup_control_socket(self):
         socket_path = self.control_socket_path
         if os.path.exists(socket_path):
+            # NOTE: Starting the same application twice we won't get
+            # here since main() won't be able to bind. We can add a
+            # (ex|nb) file lock if needed.
             log.error("Control socket exitsts %s. Probably from a previous run. Removing...", socket_path)
             self.cleanup_control_socket()
         log.debug("Binding to control socket %s", socket_path)
