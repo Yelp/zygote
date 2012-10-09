@@ -37,6 +37,9 @@ def set_nonblocking(fd):
     flags = fcntl.fcntl(fd, fcntl.F_GETFL)
     fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
+def get_rundir():
+    return os.getenv('RUNDIR') if os.getenv('RUNDIR') else os.getcwd()
+
 def get_meminfo(pid=None):
     """Get the memory statistics for the current process. Values are returned
     as kilobytes. The meanings of the fields are:
