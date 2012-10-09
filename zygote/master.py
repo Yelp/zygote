@@ -127,12 +127,16 @@ class ZygoteMaster(object):
             self.control_socket.bind(socket_path)
             self.io_loop.add_handler(self.control_socket.fileno(), self.handle_control_msg, self.io_loop.READ)
         except Exception, e:
+            # This is treated as a fatal error as only way to recover
+            # from this is to restart zygote master and it's not what
+            # we want.
             log.error("Can not bind to control socket: %s", e)
-            log.warning("Zygote is starting but you will not be able to make configuration changes on the running zygote master.")
+            log.error("Control socket is needed to make configuration changes on the running zygote master.")
+            sys.exit(1)
 
     def cleanup_control_socket(self):
-        if os.path.isfile(self.control_socket_path):
-            log.info("Removing %s" % self.control_socket_path)
+        if os.path.exists(self.control_socket_path):
+            log.debug("Removing control socket at %s" % self.control_socket_path)
             os.unlink(self.control_socket_path)
 
     def handle_control_msg(self, fd, events):
