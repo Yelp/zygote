@@ -5,6 +5,7 @@ class Message(object):
     CANARY_INIT           = 'I'
 
     CREATE_WORKER         = 'C'
+    KILL_WORKERS          = 'L'
     SHUT_DOWN             = 'K'
 
     WORKER_START          = 'S'
@@ -24,6 +25,8 @@ class Message(object):
         pid = int(pid)
         if type == cls.CREATE_WORKER:
             return MessageCreateWorker(pid, body)
+        elif type == cls.KILL_WORKERS:
+            return MessageKillWorkers(pid, body)
         elif type == cls.CANARY_INIT:
             return MessageCanaryInit(pid, body)
         elif type == cls.WORKER_START:
@@ -59,6 +62,14 @@ class MessageCreateWorker(Message):
     def __init__(self, pid, body):
         assert body == ''
         super(MessageCreateWorker, self).__init__(pid)
+
+class MessageKillWorkers(Message):
+
+    msg_type = Message.KILL_WORKERS
+
+    def __init__(self, pid, body):
+        super(MessageKillWorkers, self).__init__(pid)
+        self.num_workers_to_kill = int(body)
 
 class MessageWorkerStart(Message):
 
@@ -114,4 +125,38 @@ class MessageShutDown(Message):
 
     def __init__(self, pid, body):
         super(MessageShutDown, self).__init__(pid)
-        self.pids = [int(p) for p in body.split(' ') if p]
+        assert body == '' # just ignore the body, it should be empty
+
+
+class ControlMessage(object):
+    """Control Message type used by zygote master"""
+
+    UNKNOWN = 'I'
+    SCALE_WORKERS = 'S'
+
+    @classmethod
+    def emit(cls, body):
+        return '%s %s' % (cls.msg_type, body)
+
+    @classmethod
+    def parse(cls, msg):
+        type, body = msg.split(' ', 1)
+        if type == cls.SCALE_WORKERS:
+            return ControlMessageScaleWorkers(body)
+        else:
+            return ControlMessageUnknown(body)
+
+class ControlMessageUnknown(ControlMessage):
+
+    msg_type = ControlMessage.UNKNOWN
+
+    def __init__(self, body):
+        super(ControlMessageUnknown, self).__init__()
+
+class ControlMessageScaleWorkers(ControlMessage):
+
+    msg_type = ControlMessage.SCALE_WORKERS
+
+    def __init__(self, body):
+        super(ControlMessageScaleWorkers, self).__init__()
+        self.num_workers = int(body)
