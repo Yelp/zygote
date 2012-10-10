@@ -114,21 +114,30 @@ class ZygoteMaster(object):
         self.io_loop.add_handler(self.master_socket.fileno(), self.handle_protocol_msg, self.io_loop.READ)
 
     def setup_control_socket(self):
-        socket_path = self.control_socket_path
-        if os.path.exists(socket_path):
-            # NOTE: Starting the same application twice we won't get
-            # here since main() won't be able to bind. We can add a
-            # (ex|nb) file lock if needed.
-            log.error("Control socket exitsts %s. Probably from a previous run. Removing...", socket_path)
-            self.cleanup_control_socket()
-        log.debug("Binding to control socket %s", socket_path)
-        self.control_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
-        self.control_socket.bind(socket_path)
-        self.io_loop.add_handler(self.control_socket.fileno(), self.handle_control_msg, self.io_loop.READ)
+        try:
+            socket_path = self.control_socket_path
+            if os.path.exists(socket_path):
+                # NOTE: Starting the same application twice we won't get
+                # here since main() won't be able to bind. We can add a
+                # (ex|nb) file lock if needed.
+                log.error("Control socket exitsts %s. Probably from a previous run. Removing...", socket_path)
+                self.cleanup_control_socket()
+            log.debug("Binding to control socket %s", socket_path)
+            self.control_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
+            self.control_socket.bind(socket_path)
+            self.io_loop.add_handler(self.control_socket.fileno(), self.handle_control_msg, self.io_loop.READ)
+        except Exception, e:
+            # This is treated as a fatal error as only way to recover
+            # from this is to restart zygote master and it's not what
+            # we want.
+            log.error("Can not bind to control socket: %s", e)
+            log.error("Control socket is needed to make configuration changes on the running zygote master.")
+            sys.exit(1)
 
     def cleanup_control_socket(self):
-        log.info("Removing %s" % self.control_socket_path)
-        os.unlink(self.control_socket_path)
+        if os.path.exists(self.control_socket_path):
+            log.debug("Removing control socket at %s" % self.control_socket_path)
+            os.unlink(self.control_socket_path)
 
     def handle_control_msg(self, fd, events):
         assert fd == self.control_socket.fileno()
