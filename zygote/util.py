@@ -296,3 +296,38 @@ class ZygoteIOLoop(tornado.ioloop.IOLoop):
                 self.handle_callback_exception(handler)
 
         return super(ZygoteIOLoop, self).add_handler(fd, wrapped_handler, events)
+
+
+
+if hasattr(logging, 'NullHandler'):
+    NullHandler = logging.NullHandler
+else:
+    class NullHandler(logging.Handler):
+        def emit(self, record):
+            pass
+
+# TODO: support logging to things other than stderr
+#
+# Why do we need this? Because we can not log in our signal handlers
+# (http://docs.python.org/library/logging.html#thread-safety).
+#
+# This OTOH may cause log lines from master & worker processes merge
+# into a single line. Happens very rarely and it's still better than
+# master stuck in a deadlock.
+class LocklessHandler(logging.StreamHandler):
+    def createLock(self):
+        self.lock = None
+
+def get_logger(logger_name, debug=False):
+    logger = logging.getLogger(logger_name)
+    if os.isatty(sys.stderr.fileno()):
+        formatter = logging.Formatter('[%(process)d] %(asctime)s :: %(levelname)-7s :: %(name)s - %(message)s')
+        handler = LocklessHandler()
+        handler.setFormatter(formatter)
+        handler.setLevel(logging.DEBUG if debug else logging.INFO)
+        logger.handlers = [handler]
+        logger.propagate = False
+    else:
+        logger.handlers = [NullHandler()]
+    return logger
+
