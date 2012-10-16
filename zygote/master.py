@@ -20,17 +20,12 @@ from zygote.util import safe_kill
 from zygote.util import setproctitle
 from zygote.util import wait_for_pids
 from zygote.util import ZygoteIOLoop
+from zygote.util import get_logger
+from zygote.util import NullHandler
+from zygote.util import LocklessHandler
 from zygote.worker import INIT_FAILURE_EXIT_CODE
 from zygote.worker import ZygoteWorker
 
-if hasattr(logging, 'NullHandler'):
-    NullHandler = logging.NullHandler
-else:
-    class NullHandler(logging.Handler):
-        def emit(self, record):
-            pass
-
-log = logging.getLogger('zygote.master')
 
 try:
     import ssl # Python 2.6+
@@ -62,9 +57,11 @@ class ZygoteMaster(object):
         max_requests=None,
         zygote_base=None,
         ssl_options=None,
+        debug=False
     ):
+        self.logger = get_logger('zygote.master', debug)
         if self.__class__.instantiated:
-            log.error('cannot instantiate zygote master more than once')
+            self.logger.error('cannot instantiate zygote master more than once')
             sys.exit(1)
         self.__class__.instantiated = True
 
@@ -78,6 +75,7 @@ class ZygoteMaster(object):
         self.max_requests = max_requests
         self.zygote_base = zygote_base
         self.ssl_options = ssl_options
+        self.debug = debug
 
         self.stopped = False
         self.started_transition = None
@@ -108,7 +106,7 @@ class ZygoteMaster(object):
         socket will be used to receive messages from zygotes and their
         children.
         """
-        log.debug("Binding to master domain socket")
+        self.logger.debug("Binding to master domain socket")
         self.master_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
         self.master_socket.bind('\0zygote_%d' % os.getpid())
         self.io_loop.add_handler(self.master_socket.fileno(), self.handle_protocol_msg, self.io_loop.READ)
@@ -120,9 +118,9 @@ class ZygoteMaster(object):
                 # NOTE: Starting the same application twice we won't get
                 # here since main() won't be able to bind. We can add a
                 # (ex|nb) file lock if needed.
-                log.error("Control socket exitsts %s. Probably from a previous run. Removing...", socket_path)
+                self.logger.error("Control socket exitsts %s. Probably from a previous run. Removing...", socket_path)
                 self.cleanup_control_socket()
-            log.debug("Binding to control socket %s", socket_path)
+            self.logger.debug("Binding to control socket %s", socket_path)
             self.control_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
             self.control_socket.bind(socket_path)
             self.io_loop.add_handler(self.control_socket.fileno(), self.handle_control_msg, self.io_loop.READ)
@@ -130,13 +128,13 @@ class ZygoteMaster(object):
             # This is treated as a fatal error as only way to recover
             # from this is to restart zygote master and it's not what
             # we want.
-            log.error("Can not bind to control socket: %s", e)
-            log.error("Control socket is needed to make configuration changes on the running zygote master.")
+            self.logger.error("Can not bind to control socket: %s", e)
+            self.logger.error("Control socket is needed to make configuration changes on the running zygote master.")
             sys.exit(1)
 
     def cleanup_control_socket(self):
         if os.path.exists(self.control_socket_path):
-            log.debug("Removing control socket at %s" % self.control_socket_path)
+            self.logger.debug("Removing control socket at %s" % self.control_socket_path)
             os.unlink(self.control_socket_path)
 
     def handle_control_msg(self, fd, events):
@@ -147,7 +145,7 @@ class ZygoteMaster(object):
 
         # NOTE: We can possibly use SO_PEERCRED on control socket to
         # get more information about the client.
-        log.info('received message of type %s', msg_type.__name__,)
+        self.logger.info('received message of type %s', msg_type.__name__,)
 
         if msg_type is message.ControlMessageScaleWorkers:
             self.scale_workers(msg.num_workers)
@@ -158,10 +156,10 @@ class ZygoteMaster(object):
         data = self.master_socket.recv(self.RECV_SIZE)
         msg = message.Message.parse(data)
         msg_type = type(msg)
-        log.debug('received message of type %s from pid %d', msg_type.__name__, msg.pid)
+        self.logger.debug('received message of type %s from pid %d', msg_type.__name__, msg.pid)
 
         if msg_type is message.MessageCanaryInit:
-            log.info("Canary zygote initialized. Transitioning idle workers.")
+            self.logger.info("Canary zygote initialized. Transitioning idle workers.")
             # This is not the canary zygote anymore
             self.current_zygote.canary = False
             # We can also release the handle on the previous
@@ -179,7 +177,7 @@ class ZygoteMaster(object):
                 zygote.add_worker(msg.pid, msg.time_created)
         elif msg_type is message.MessageWorkerExitInitFail:
             if not self.current_zygote.canary:
-                log.error("A worker initialization failed, giving up")
+                self.logger.error("A worker initialization failed, giving up")
                 self.stop()
                 return
         elif msg_type is message.MessageWorkerExit:
@@ -192,10 +190,10 @@ class ZygoteMaster(object):
 
             zygote.remove_worker(msg.child_pid)
             if zygote.shutting_down:
-                log.debug('Removed a worker from shutting down zygote %d, %d left', msg.pid, len(zygote.workers()))
+                self.logger.debug('Removed a worker from shutting down zygote %d, %d left', msg.pid, len(zygote.workers()))
                 return
             else:
-                log.debug('Removed a worker from zygote %d, %d left', msg.pid, len(zygote.workers()))
+                self.logger.debug('Removed a worker from zygote %d, %d left', msg.pid, len(zygote.workers()))
 
             if not self.stopped:
                 if zygote in (self.current_zygote, self.prev_zygote):
@@ -217,10 +215,10 @@ class ZygoteMaster(object):
             if worker:
                 worker.end_request()
                 if self.max_requests is not None and worker.request_count >= self.max_requests:
-                    log.info('Worker %d reached max_requests %d, killing it', worker.pid, self.max_requests)
+                    self.logger.info('Worker %d reached max_requests %d, killing it', worker.pid, self.max_requests)
                     safe_kill(worker.pid, signal.SIGQUIT)
         else:
-            log.warning('master got unexpected message of type %s', msg_type)
+            self.logger.warning('master got unexpected message of type %s', msg_type)
 
 
     def scale_workers(self, num_workers):
@@ -230,11 +228,11 @@ class ZygoteMaster(object):
         if not diff_num_workers:
             return
         elif diff_num_workers > 0:
-            log.info('Increasing number of workers from %d to %d.', prev_num_workers, num_workers)
+            self.logger.info('Increasing number of workers from %d to %d.', prev_num_workers, num_workers)
             for _ in range(diff_num_workers):
                 self.current_zygote.request_spawn()
         else:
-            log.info('Reducing number of workers from %d to %d.', prev_num_workers, num_workers)
+            self.logger.info('Reducing number of workers from %d to %d.', prev_num_workers, num_workers)
             self.current_zygote.request_kill_workers(-diff_num_workers)
 
     def reap_child(self, signum, frame):
@@ -257,7 +255,7 @@ class ZygoteMaster(object):
                 break
 
             status_code = os.WEXITSTATUS(status)
-            log.info('zygote %d exited with status %d', pid, status_code)
+            self.logger.info('zygote %d exited with status %d', pid, status_code)
 
             # the zygote died. if the zygote was not the current zygote it's OK;
             # otherwise, we need to start a new one
@@ -270,9 +268,9 @@ class ZygoteMaster(object):
                 if pid == self.current_zygote.pid and self.current_zygote.canary:
                     if self.prev_zygote:
                         self.curent_zygote = self.prev_zygote
-                    log.error("Could not initialize canary worker. Giving up trying to respawn")
+                    self.logger.error("Could not initialize canary worker. Giving up trying to respawn")
                 else:
-                    log.error("Could not initialize zygote worker, giving up")
+                    self.logger.error("Could not initialize zygote worker, giving up")
                     self.really_stop()
                 return
 
@@ -306,26 +304,26 @@ class ZygoteMaster(object):
         if self.stopped:
             return
         # kill all of the workers
-        log.info('stopping all zygotes and workers')
+        self.logger.info('stopping all zygotes and workers')
         pids = set()
         for zygote in self.zygote_collection:
             pids.add(zygote.pid)
-            log.debug('requesting shutdown on %d', zygote.pid)
+            self.logger.debug('requesting shutdown on %d', zygote.pid)
             zygote.request_shut_down()
 
-        log.debug('setting self.stopped')
+        self.logger.debug('setting self.stopped')
         self.stopped = True
 
-        log.debug('master is stopping. will not try to update anymore.')
+        self.logger.debug('master is stopping. will not try to update anymore.')
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
-        log.debug('stopping io_loop.')
+        self.logger.debug('stopping io_loop.')
         if getattr(self, 'io_loop', None) is not None:
             self.io_loop.stop()
 
-        log.info('waiting for workers to exit before stoping master.')
-        wait_for_pids(pids, self.WAIT_FOR_KILL_TIME, log, kill_pgroup=True)
-        log.info('all zygotes exited; good night')
+        self.logger.info('waiting for workers to exit before stoping master.')
+        wait_for_pids(pids, self.WAIT_FOR_KILL_TIME, self.logger, kill_pgroup=True)
+        self.logger.info('all zygotes exited; good night')
 
         self.really_stop(0)
 
@@ -340,7 +338,7 @@ class ZygoteMaster(object):
         if not self.started_transition:
             self.started_transition = time.time()
         if (time.time() - self.started_transition) > self.WAIT_FOR_KILL_TIME:
-            log.debug("sending SIGKILL for transition because it was Too Damn Slow")
+            self.logger.debug("sending SIGKILL for transition because it was Too Damn Slow")
             sig = signal.SIGKILL
         else:
             sig = signal.SIGQUIT
@@ -354,10 +352,10 @@ class ZygoteMaster(object):
         other_zygote_count = len(other_zygotes)
         for zygote in other_zygotes:
             for worker in zygote.idle_workers():
-                log.debug("killing worker %d with signal %d", worker.pid, sig)
+                self.logger.debug("killing worker %d with signal %d", worker.pid, sig)
                 if safe_kill(worker.pid, sig):
                     kill_count += 1
-        log.info('Attempted to transition %d workers from %d zygotes', kill_count, other_zygote_count)
+        self.logger.info('Attempted to transition %d workers from %d zygotes', kill_count, other_zygote_count)
 
         if other_zygote_count:
             # The list of other zygotes was at least one, so we should
@@ -380,7 +378,7 @@ class ZygoteMaster(object):
         # The only valid time to kill a zygote is if it doesn't have
         # any workers left.
         if zygote.worker_count == 0:
-            log.info("killing zygote with pid %d" % zygote.pid)
+            self.logger.info("killing zygote with pid %d" % zygote.pid)
             safe_kill(zygote.pid, sig)
 
     def update_revision(self, signum=None, frame=None):
@@ -400,7 +398,7 @@ class ZygoteMaster(object):
 
         pid = os.fork()
         if pid:
-            log.info('started zygote %d pointed at base %r', pid, realbase)
+            self.logger.info('started zygote %d pointed at base %r', pid, realbase)
             z = self.zygote_collection.add_zygote(pid, realbase, self.io_loop, canary=canary)
             if not canary:
                 self.io_loop.add_callback(self.transition_idle_workers)
@@ -423,7 +421,8 @@ class ZygoteMaster(object):
                     module=self.module,
                     args=self.application_args,
                     ssl_options=self.ssl_options,
-                    canary=canary
+                    canary=canary,
+                    debug=self.debug
             )
             z.loop()
 
@@ -435,18 +434,8 @@ class ZygoteMaster(object):
 
 def main(opts, extra_args):
     setproctitle('zygote master %s' % (opts.module,))
-
-    # Initialize the logging module
-    formatter = logging.Formatter('[%(process)d] %(asctime)s :: %(levelname)-7s :: %(name)s - %(message)s')
-    zygote_logger = logging.getLogger('zygote')
-
-    # TODO: support logging to things other than stderr
-    if os.isatty(sys.stderr.fileno()):
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.DEBUG if opts.debug else logging.INFO)
-        console_handler.setFormatter(formatter)
-        zygote_logger.addHandler(console_handler)
-
+    zygote_logger = get_logger('zygote', opts.debug)
+    
     if not logging.root.handlers:
         # XXX: WARNING
         #
@@ -462,11 +451,10 @@ def main(opts, extra_args):
 
     if opts.debug:
         logging.root.setLevel(logging.DEBUG)
-        zygote_logger.setLevel(logging.DEBUG)
     else:
         logging.root.setLevel(logging.INFO)
-        zygote_logger.setLevel(logging.INFO)
-    log.info('main started')
+
+    zygote_logger.info('main started')
 
     # Create the TCP listen socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -486,7 +474,7 @@ def main(opts, extra_args):
                 ca_certs=opts.cacerts,
                 cert_reqs=ssl.CERT_OPTIONAL if opts.cacerts else ssl.CERT_NONE,
         )
-        log.info('using SSL with %s', ssl_options)
+        zygote_logger.info('using SSL with %s', ssl_options)
 
         sock = ssl.wrap_socket(sock,
                 server_side=True,
@@ -505,6 +493,7 @@ def main(opts, extra_args):
         max_requests=opts.max_requests,
         zygote_base=opts.zygote_base,
         ssl_options=ssl_options,
+        debug=opts.debug
     )
     atexit.register(master.stop)
     master.start()
