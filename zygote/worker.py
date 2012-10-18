@@ -1,6 +1,5 @@
 import atexit
 import errno
-import logging
 import os
 import random
 import signal
@@ -15,7 +14,13 @@ if tornado.version_info >= (2,1,0):
 else:
     from ._httpserver import HTTPServer
 
-from .util import setproctitle, AFUnixSender, ZygoteIOLoop, safe_kill, wait_for_pids, set_nonblocking
+from zygote.util import AFUnixSender
+from zygote.util import get_logger
+from zygote.util import safe_kill
+from zygote.util import set_nonblocking
+from zygote.util import setproctitle
+from zygote.util import wait_for_pids
+from zygote.util import ZygoteIOLoop
 import message
 
 # Exit with this exit code when there was a failure to init the worker
@@ -59,21 +64,21 @@ class ZygoteWorker(object):
      * creates read and write pipes to the parent process
     """
 
-    log = logging.getLogger('zygote.worker.zygote_process')
-
     RECV_SIZE = 8192
 
     # how many seconds to wait before sending SIGKILL to children
     WAIT_FOR_KILL_TIME = 10.0
 
-    def __init__(self, sock, basepath, module, args, ssl_options=None, canary=False):
+    def __init__(self, sock, basepath, module, args, ssl_options=None, canary=False, debug=False):
         self.args = args
         self.ssl_options = ssl_options
         self.ppid = os.getppid()
         self.canary = canary
         self.children = set()
+        self.debug = debug
+        self.logger = get_logger('zygote.worker.zygote_process', self.debug)
 
-        establish_signal_handlers(self.log)
+        establish_signal_handlers(self.logger)
 
         # Set up the control socket nice and early
         try:
@@ -81,13 +86,13 @@ class ZygoteWorker(object):
             self.control_socket.bind('\0zygote_%d' % os.getpid())
         except Exception:
             # If we can't bind to the control socket, just give up
-            self.log.error("Could not bind to control socket, aborting early!")
+            self.logger.error("Could not bind to control socket, aborting early!")
             sys.exit(INIT_FAILURE_EXIT_CODE)
 
         try:
             self._real_init(sock, basepath, module, args)
         except Exception:
-            self.log.exception("Error performing initialization of %s", self)
+            self.logger.exception("Error performing initialization of %s", self)
             sys.exit(INIT_FAILURE_EXIT_CODE)
 
     def _real_init(self, sock, basepath, module, args):
@@ -126,7 +131,7 @@ class ZygoteWorker(object):
 
         # If there is an initialize function defined then call it.
         if hasattr(t, 'initialize'):
-            self.log.info('initializing zygote')
+            self.logger.info('initializing zygote')
             t.initialize(*self.args)
 
         if self.canary:
@@ -134,7 +139,7 @@ class ZygoteWorker(object):
             # Initialization is successful. This is not the canary zygote anymore.
             self.canary = False
 
-        self.log.info('new zygote started')
+        self.logger.info('new zygote started')
 
     def handle_control(self, fd, events):
         assert fd == self.control_socket.fileno()
@@ -151,7 +156,7 @@ class ZygoteWorker(object):
 
     def kill_workers(self, num_workers_to_kill):
         if num_workers_to_kill > len(self.children):
-            self.log.error(
+            self.logger.error(
                 'Request to kill %d workers out of %d current workers',
                 num_workers_to_kill,
                 len(self.children)
@@ -160,7 +165,7 @@ class ZygoteWorker(object):
         worker_pids = random.sample(self.children, num_workers_to_kill)
         for pid in worker_pids:
             safe_kill(pid)
-        wait_for_pids(worker_pids, self.WAIT_FOR_KILL_TIME, self.log)
+        wait_for_pids(worker_pids, self.WAIT_FOR_KILL_TIME, self.logger)
 
     def kill_all_workers(self):
         """Kill all workers and wait (synchronously) for them
@@ -170,12 +175,12 @@ class ZygoteWorker(object):
         signal.signal(signal.SIGCHLD, signal.SIG_DFL)
         waiting_pids = set()
 
-        self.log.debug('zygote requesting kill on %d pids', len(self.children))
+        self.logger.debug('zygote requesting kill on %d pids', len(self.children))
         for pid in self.children:
             if safe_kill(pid, signal.SIGQUIT):
                 waiting_pids.add(pid)
-        wait_for_pids(waiting_pids, self.WAIT_FOR_KILL_TIME, self.log)
-        self.log.debug('zygote done killing children, terminating')
+        wait_for_pids(waiting_pids, self.WAIT_FOR_KILL_TIME, self.logger)
+        self.logger.debug('zygote done killing children, terminating')
         sys.exit(0)
 
     def reap_child(self, signum, frame):
@@ -194,7 +199,7 @@ class ZygoteWorker(object):
                 break
 
             status_code = os.WEXITSTATUS(status)
-            self.log.info('reaped worker %d, status %d', pid, status_code)
+            self.logger.info('reaped worker %d, status %d', pid, status_code)
             if status_code == WORKER_INIT_FAILURE_EXIT_CODE:
                 notify(self.notify_socket, message.MessageWorkerExitInitFail, '%d %d' % (pid, status_code))
             else:
@@ -212,13 +217,13 @@ class ZygoteWorker(object):
             self.children.add(pid)
             return
         try:
-            self.log.debug("Calling _initialize_worker")
+            self.logger.debug("Calling _initialize_worker")
             self._initialize_worker(time_created)
-            self.log.debug("Worker initialized")
+            self.logger.debug("Worker initialized")
         except Exception, e:
-            self.log.exception("Error initializing worker process: %s", e)
+            self.logger.exception("Error initializing worker process: %s", e)
             sys.exit(WORKER_INIT_FAILURE_EXIT_CODE)
-        self.log.debug("Looks okay to me, smooth sailing!")
+        self.logger.debug("Looks okay to me, smooth sailing!")
 
     def _initialize_worker(self, time_created):
         # We're the child. We need to close the write_pipe in order for the
@@ -227,11 +232,11 @@ class ZygoteWorker(object):
         # for writes from *this* process' write_pipe).
         os.close(self.write_pipe)
 
-        log = logging.getLogger('zygote.worker.worker_process')
-        log.debug('new worker started')
+        logger = get_logger('zygote.worker.worker_process')
+        logger.debug('new worker started')
 
         def on_parent_exit(fd, events):
-            log.error('detected that intermediate zygote died, exiting')
+            logger.error('detected that intermediate zygote died, exiting')
             sys.exit(0)
 
         # create a new i/o loop
@@ -241,15 +246,15 @@ class ZygoteWorker(object):
         # add the read pipe
         io_loop.add_handler(self.read_pipe, on_parent_exit, io_loop.READ)
 
-        sock = AFUnixSender(io_loop, logger=log)
+        sock = AFUnixSender(io_loop, logger=logger)
         sock.connect('\0zygote_%d' % self.ppid)
 
-        establish_signal_handlers(log)
+        establish_signal_handlers(logger)
         def on_headers(line, headers):
-            log.debug('sending MessageHTTPBegin')
+            logger.debug('sending MessageHTTPBegin')
             notify(sock, message.MessageHTTPBegin, line)
         def on_close(disconnected=False):
-            log.debug('sending MessageHTTPEnd')
+            logger.debug('sending MessageHTTPEnd')
             notify(sock, message.MessageHTTPEnd)
 
         notify(sock, message.MessageWorkerStart, '%d %d' % (int(time_created * 1e6), os.getppid()))
@@ -260,13 +265,13 @@ class ZygoteWorker(object):
             # io_loop instance should NOT use io_loop.start() because start()
             # is invoked by the corresponding zygote worker.
             kwargs = {'io_loop': io_loop}
-            log.debug("Invoking get_application")
+            logger.debug("Invoking get_application")
             app = self.get_application(*self.args, **kwargs)
         except Exception:
-            log.error("Unable to get application")
+            logger.error("Unable to get application")
             raise
         # TODO: make keep-alive servers work
-        log.debug("Creating HTTPServer")
+        logger.debug("Creating HTTPServer")
         http_server = HTTPServer(app,
                 io_loop=io_loop,
                 no_keep_alive=True,
@@ -279,6 +284,6 @@ class ZygoteWorker(object):
         else:
             http_server._socket = self.sock
             io_loop.add_handler(self.sock.fileno(), http_server._handle_events, io_loop.READ)
-        log.debug("Started ioloop...")
+        logger.debug("Started ioloop...")
         io_loop.start()
 

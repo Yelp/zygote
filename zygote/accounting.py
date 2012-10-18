@@ -1,5 +1,4 @@
 import datetime
-import logging
 import os
 import signal
 import time
@@ -8,7 +7,7 @@ import zygote.util
 from zygote import message
 from zygote.util import meminfo_fmt
 
-log = logging.getLogger('zygote.accounting')
+log = zygote.util.get_logger('zygote.accounting')
 
 def format_millis(v):
     if v is not None:
