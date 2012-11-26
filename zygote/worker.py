@@ -47,6 +47,7 @@ def establish_signal_handlers(logger):
     # we explicitly ignore SIGINT and SIGTERM
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     for sig in (signal.SIGQUIT,):
         signal.signal(sig, zygote_exit)
 
@@ -286,4 +287,3 @@ class ZygoteWorker(object):
             io_loop.add_handler(self.sock.fileno(), http_server._handle_events, io_loop.READ)
         logger.debug("Started ioloop...")
         io_loop.start()
-
