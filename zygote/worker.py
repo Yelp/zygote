@@ -70,7 +70,11 @@ class ZygoteWorker(object):
     # how many seconds to wait before sending SIGKILL to children
     WAIT_FOR_KILL_TIME = 10.0
 
-    def __init__(self, sock, basepath, module, args, ssl_options=None, canary=False, debug=False):
+    def __init__(self, sock, basepath, module, name, version, args, ssl_options=None, canary=False, debug=False):
+        self.module = module
+        self.name = name
+        self.version = version
+        self.basepath = basepath
         self.args = args
         self.ssl_options = ssl_options
         self.ppid = os.getppid()
@@ -91,16 +95,19 @@ class ZygoteWorker(object):
             sys.exit(INIT_FAILURE_EXIT_CODE)
 
         try:
-            self._real_init(sock, basepath, module, args)
+            self._real_init(sock, self.basepath, self.module, args)
         except Exception:
             self.logger.exception("Error performing initialization of %s", self)
             sys.exit(INIT_FAILURE_EXIT_CODE)
 
+    def _version(self):
+        """Get the actual version as specified or from the basepath."""
+        return self.version or self.basepath.split('/')[-1]
+
     def _real_init(self, sock, basepath, module, args):
         """Actual initialization function. Broken out for error handling"""
 
-        self.version = basepath.split('/')[-1]
-        setproctitle('zygote version=%s' % (self.version,))
+        setproctitle('zygote name=%s version=%s' % (self.name, self._version(),))
 
         # Create a pipe(2) pair. This will be used so workers can detect when
         # the intermediate zygote exits -- when this happens, a read event will
@@ -259,7 +266,7 @@ class ZygoteWorker(object):
             notify(sock, message.MessageHTTPEnd)
 
         notify(sock, message.MessageWorkerStart, '%d %d' % (int(time_created * 1e6), os.getppid()))
-        setproctitle('zygote-worker version=%s' % self.version)
+        setproctitle('zygote-worker name=%s version=%s' % (self.name, self._version(),))
         try:
             # io_loop is passed into get_application for program to add handler
             # or schedule task on the main io_loop.  Program that uses this

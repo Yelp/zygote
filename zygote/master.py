@@ -50,6 +50,8 @@ class ZygoteMaster(object):
         sock,
         basepath,
         module,
+        name,
+        version,
         num_workers,
         control_port,
         control_socket_path,
@@ -68,6 +70,8 @@ class ZygoteMaster(object):
         self.sock = sock
         self.basepath = basepath
         self.module = module
+        self.name = name
+        self.version = version
         self.num_workers = num_workers
         self.control_port = control_port
         self.control_socket_path = control_socket_path
@@ -419,6 +423,8 @@ class ZygoteMaster(object):
                     sock=self.sock,
                     basepath=realbase,
                     module=self.module,
+                    name=self.name,
+                    version=self.version,
                     args=self.application_args,
                     ssl_options=self.ssl_options,
                     canary=canary,
@@ -433,9 +439,9 @@ class ZygoteMaster(object):
         self.io_loop.start()
 
 def main(opts, extra_args):
-    setproctitle('zygote master %s' % (opts.module,))
+    setproctitle('zygote master %s' % (opts.name or opts.module,))
     zygote_logger = get_logger('zygote', opts.debug)
-    
+
     if not logging.root.handlers:
         # XXX: WARNING
         #
@@ -486,6 +492,8 @@ def main(opts, extra_args):
         sock,
         basepath=opts.basepath,
         module=opts.module,
+        name=opts.name or opts.module,
+        version=opts.version,
         num_workers=opts.num_workers,
         control_port=opts.control_port,
         control_socket_path=opts.control_socket_path,
