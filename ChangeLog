@@ -1,2 +1,5 @@
+0.2 Wed Jan  2 10:38:23 PST 2013
+	* Add a --name/-n option to set proctitle name (eskil@eskil.org).
+
 0.1 Wed Nov 14 11:50:44 PST 2012
-   * Starting a ChangeLog file (eskil@yelp.com)
+	* Starting a ChangeLog file (eskil@yelp.com)
