@@ -4,7 +4,7 @@ from setuptools import setup
 
 setup(
     name         = 'zygote',
-    version      = '0.1',
+    version      = '0.2',
     author       = 'Evan Klitzke',
     author_email = 'evan@eklitzke.org',
     description  = 'A tornado HTTP worker management tool',

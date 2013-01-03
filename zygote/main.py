@@ -27,6 +27,8 @@ def main():
     parser.add_option('-b', '--basepath', default=os.environ.get('BASEPATH', ''), help='The basepath to use')
     parser.add_option('--control-port', type='int', default=5100, help='The control port to listen on')
     parser.add_option('-d', '--debug', default=False, action='store_true', help='Enable debugging')
+    parser.add_option('-n', '--name', default=None, help='The name of the application to set in proctitle, otherwise use the app module.')
+    parser.add_option('--version', default=None, help='The version of the application to set in proctitle.')
     parser.add_option('-m', '--module', default=None, help='The name of the module holding get_application()')
     parser.add_option('-p', '--port', type='int', default=0, help='The port to bind on')
     parser.add_option('-i', '--interface', default='', help='The interface to bind on')
