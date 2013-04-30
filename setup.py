@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
 from setuptools import setup
+from zygote import version
 
 setup(
     name         = 'zygote',
-    version      = '0.2',
+    version      = version,
     author       = 'Evan Klitzke',
     author_email = 'evan@eklitzke.org',
     description  = 'A tornado HTTP worker management tool',
