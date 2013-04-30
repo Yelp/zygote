@@ -275,7 +275,7 @@ class HTTPConnection(object):
                 self.stream.read_bytes(content_length, self._on_request_body)
                 return
 
-            self.on_headers(start_line, headers)
+            self.on_headers(start_line, remote_ip=self.address[0], headers=headers)
             self.request_callback(self._request)
         except _BadRequestException, e:
             logging.info("Malformed HTTP request from %s: %s",

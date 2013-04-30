@@ -258,9 +258,9 @@ class ZygoteWorker(object):
         sock.connect('\0zygote_%d' % self.ppid)
 
         establish_signal_handlers(logger)
-        def on_headers(line, headers):
+        def on_headers(line, remote_ip, headers):
             logger.debug('sending MessageHTTPBegin')
-            notify(sock, message.MessageHTTPBegin, line)
+            notify(sock, message.MessageHTTPBegin, "%s %s" % (remote_ip, line))
         def on_close(disconnected=False):
             logger.debug('sending MessageHTTPEnd')
             notify(sock, message.MessageHTTPEnd)
