@@ -364,7 +364,7 @@ class HTTPConnection(object):
                 return
 
             if self._headers_callback is not None:
-                self._headers_callback(start_line, headers)
+                self._headers_callback(start_line, self.address[0], headers)
             self.request_callback(self._request)
         except _BadRequestException, e:
             logging.info("Malformed HTTP request from %s: %s",
