@@ -1,5 +1,19 @@
-0.2 Wed Jan  2 10:38:23 PST 2013
-	* Add a --name/-n option to set proctitle name (eskil@eskil.org).
+2013-05-09  Baris Metin  <bmetin@yelp.com>
 
-0.1 Wed Nov 14 11:50:44 PST 2012
+	* Merge David Selassie's install-ioloop branch (worker installs its ioloop as the global ioloop)
+	* bump version to 0.4
+	* ChangeLog format is now GNU style
+
+2013-04-30  Baris Metin  <bmetin@yelp.com>
+
+	* fix remote_ip in status handler
+	* bump version to 0.3
+
+2013-01-02  Eskil Olsen  <eskil@yelp.com>
+
+	* Add a --name/-n option to set proctitle name (eskil@eskil.org).
+	* bump version to 0.2
+
+2012-11-14  Eskil Olsen  <eskil@yelp.com>
+
 	* Starting a ChangeLog file (eskil@yelp.com)
