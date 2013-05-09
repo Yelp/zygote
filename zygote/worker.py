@@ -250,6 +250,14 @@ class ZygoteWorker(object):
         # create a new i/o loop
         del self.io_loop
         io_loop = ZygoteIOLoop(log_name='zygote.worker.worker_process.ioloop')
+        # Install this worker's io_loop as the global io_loop; only applies in
+        # this fork. Programs that uses this io_loop instance should NOT use
+        # io_loop.start() because start() is invoked by the corresponding
+        # zygote worker.
+        if tornado.version_info >= (2,1,0):
+            io_loop.install()
+        else:
+            tornado.ioloop.IOLoop._instance = io_loop
 
         # add the read pipe
         io_loop.add_handler(self.read_pipe, on_parent_exit, io_loop.READ)
