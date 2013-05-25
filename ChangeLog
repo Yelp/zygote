@@ -1,3 +1,8 @@
+2013-05-24  Baris Metin  <bmetin@yelp.com>
+
+	* Add load .pth files from basepath at zygote initialization time
+	* Bump version to 0.5
+
 2013-05-09  Baris Metin  <bmetin@yelp.com>
 
 	* Merge David Selassie's install-ioloop branch (worker installs its ioloop as the global ioloop)

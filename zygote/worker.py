@@ -3,6 +3,7 @@ import errno
 import os
 import random
 import signal
+import site
 import socket
 import sys
 import time
@@ -54,6 +55,7 @@ def establish_signal_handlers(logger):
 def notify(sock, msg_cls, body=''):
     """Send a message to the zygote master. Should be using AFUnixSender?"""
     sock.send(msg_cls.emit(str(body)))
+
 
 class ZygoteWorker(object):
     """A Zygote is a process that manages children worker processes.
@@ -123,6 +125,12 @@ class ZygoteWorker(object):
 
         os.chdir(basepath)
         sys.path.insert(0, basepath)
+
+        # Add basepath to sys.path so that application will be able to
+        # load what's required. We do this at zygote initialization
+        # to have the correct paths at new code reload.
+        site.addsitedir(os.path.realpath(basepath))
+
         t = __import__(module, [], [], ['initialize', 'get_application'], 0)
 
         self.sock = sock
