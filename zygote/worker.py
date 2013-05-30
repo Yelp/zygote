@@ -124,7 +124,6 @@ class ZygoteWorker(object):
         self.io_loop = ZygoteIOLoop(log_name='zygote.worker.ioloop')
 
         os.chdir(basepath)
-        sys.path.insert(0, basepath)
 
         # Add basepath to sys.path so that application will be able to
         # load what's required. We do this at zygote initialization

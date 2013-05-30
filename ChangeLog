@@ -1,3 +1,8 @@
+2013-05-29  Baris Metin  <bmetin@yelp.com>
+
+	* Remove redundant sys.path.insert from zygote worker
+	* Bump version to 0.5.1
+
 2013-05-24  Baris Metin  <bmetin@yelp.com>
 
 	* Add load .pth files from basepath at zygote initialization time
