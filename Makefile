@@ -10,7 +10,7 @@ clean:
 	rm -rf tmp_* current
 
 test:
-	@testify -v tests.test
+	@testify -v tests
 
 production:
 
