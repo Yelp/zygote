@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import with_statement
 
 import errno
@@ -331,3 +332,12 @@ def get_logger(logger_name, debug=False):
         logger.handlers = [NullHandler()]
     return logger
 
+
+def sanitize_headers(headers):
+    """Sanitize sensitive request headers for logging"""
+    results = dict(headers)
+    # Redact instead of remove Authorization header so that those
+    # using Basic Auth can debug if needed
+    if results.get('Authorization'):
+        results['Authorization'] = '***redacted***'
+    return results
