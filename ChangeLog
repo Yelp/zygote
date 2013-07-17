@@ -1,3 +1,8 @@
+2013-07-17  Baris Metin  <bmetin@yelp.com>
+
+	* merge @tranminhh's patch to sanitize headers
+	* Bump version to 0.5.2
+
 2013-05-29  Baris Metin  <bmetin@yelp.com>
 
 	* Remove redundant sys.path.insert from zygote worker
