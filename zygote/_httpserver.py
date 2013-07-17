@@ -1,7 +1,12 @@
+# -*- coding: utf-8 -*-
 ###### THIS IS A MODIFIED VERSION OF TORNADO'S HTTPSERVER FROM TORNADO 1.2 #######
 #
 # It has been modified to support a callback after headers finish, and
 # another callback on close.
+#
+# HTTPRequest.__repr__ has also been modified to not show body (POST can
+# contain sensitive data) or sensitive headers, since HTTPRequest is repr'ed
+# when tornado logs errors.
 #
 # These changes will most likely need to be ported to a new version if you
 # ever want to upgrade tornado.
@@ -35,6 +40,9 @@ from tornado import httputil
 from tornado import ioloop
 from tornado import iostream
 from tornado import stack_context
+
+from zygote.util import sanitize_headers
+
 
 try:
     import fcntl
@@ -543,8 +551,7 @@ class HTTPRequest(object):
             return None
 
     def __repr__(self):
-        attrs = ("protocol", "host", "method", "uri", "version", "remote_ip",
-                 "body")
+        attrs = ("protocol", "host", "method", "uri", "version", "remote_ip")
         args = ", ".join(["%s=%r" % (n, getattr(self, n)) for n in attrs])
         return "%s(%s, headers=%s)" % (
-            self.__class__.__name__, args, dict(self.headers))
+            self.__class__.__name__, args, sanitize_headers(self.headers))
