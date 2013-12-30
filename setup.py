@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 
-from setuptools import setup
-from zygote import version
+from setuptools import find_packages
+
 
 setup(
     name         = 'zygote',
-    version      = version,
+    version      = '0.5.3',
     author       = 'Evan Klitzke',
     author_email = 'evan@eklitzke.org',
     description  = 'A tornado HTTP worker management tool',
@@ -13,4 +13,3 @@ setup(
     entry_points = {'console_scripts': 'zygote = zygote.main:main'},
     install_requires = ['setuptools', 'tornado']
 )
-
