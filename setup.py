@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from setuptools import find_packages
+from setuptools import setup
 
 
 setup(
@@ -11,5 +12,6 @@ setup(
     description  = 'A tornado HTTP worker management tool',
     license      = 'Apache License 2.0',
     entry_points = {'console_scripts': 'zygote = zygote.main:main'},
+    packages     = find_packages(exclude=['tests']),
     install_requires = ['setuptools', 'tornado']
 )
