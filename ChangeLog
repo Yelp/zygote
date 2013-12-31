@@ -1,3 +1,9 @@
+2013-12-30  David Selassie  <dselassi@yelp.com>
+
+	* Version is now pegged in setup.py
+	* Package is actually declared in setup.py
+	* Resources now live inside the package and are distributed
+
 2013-07-17  Baris Metin  <bmetin@yelp.com>
 
 	* merge @tranminhh's patch to sanitize headers

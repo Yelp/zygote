@@ -2,6 +2,7 @@ from __future__ import with_statement
 
 import datetime
 import os
+from pkg_resources import resource_filename
 import socket
 import time
 import traceback
@@ -66,11 +67,11 @@ class JSONHandler(RequestHandler):
 
 def get_httpserver(io_loop, port, zygote_master, zygote_base=None, ssl_options=None):
     if zygote_base is not None:
-        static_path = os.path.realpath(os.path.join(zygote_base, 'static'))
-        template_path = os.path.realpath(os.path.join(zygote_base, 'templates'))
+        static_path = os.path.realpath(os.path.join(zygote_base, 'zygote', 'resources', 'static'))
+        template_path = os.path.realpath(os.path.join(zygote_base, 'zygote', 'resources', 'templates'))
     else:
-        static_path = os.path.realpath('static')
-        template_path = os.path.realpath('templates')
+        static_path = os.path.realpath(resource_filename('zygote.resources', 'static'))
+        template_path = os.path.realpath(resource_filename('zygote.resources', 'templates'))
 
     # We need to ensure that we keep file handles open to the static path
     # and template path. If they go away (from some kind of clean up) while
