@@ -13,5 +13,6 @@ setup(
     license      = 'Apache License 2.0',
     entry_points = {'console_scripts': 'zygote = zygote.main:main'},
     packages     = find_packages(exclude=['tests']),
-    install_requires = ['setuptools', 'tornado']
+    install_requires = ['setuptools', 'tornado'],
+    include_package_data = True,
 )

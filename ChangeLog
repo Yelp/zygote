@@ -2,6 +2,7 @@
 
 	* Version is now pegged in setup.py
 	* Package is actually declared in setup.py
+	* Resources now live inside the package and are distributed
 
 2013-07-17  Baris Metin  <bmetin@yelp.com>
 
