@@ -321,15 +321,12 @@ class LocklessHandler(logging.StreamHandler):
 
 def get_logger(logger_name, debug=False):
     logger = logging.getLogger(logger_name)
-    if os.isatty(sys.stderr.fileno()):
-        formatter = logging.Formatter('[%(process)d] %(asctime)s :: %(levelname)-7s :: %(name)s - %(message)s')
-        handler = LocklessHandler()
-        handler.setFormatter(formatter)
-        handler.setLevel(logging.DEBUG if debug else logging.INFO)
-        logger.handlers = [handler]
-        logger.propagate = False
-    else:
-        logger.handlers = [NullHandler()]
+    formatter = logging.Formatter('[%(process)d] %(asctime)s :: %(levelname)-7s :: %(name)s - %(message)s')
+    handler = LocklessHandler()
+    handler.setFormatter(formatter)
+    handler.setLevel(logging.DEBUG if debug else logging.INFO)
+    logger.handlers = [handler]
+    logger.propagate = False
     return logger
 
 
